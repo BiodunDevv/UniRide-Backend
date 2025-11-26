@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Booking Confirmation</title>
+  <style>
+    body {
+      font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+      line-height: 1.6;
+      color: #333;
+      max-width: 600px;
+      margin: 0 auto;
+      padding: 20px;
+    }
+    .container {
+      background-color: #f9f9f9;
+      border-radius: 8px;
+      padding: 30px;
+      border: 1px solid #e0e0e0;
+    }
+    .header {
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      color: white;
+      padding: 20px;
+      border-radius: 8px 8px 0 0;
+      text-align: center;
+    }
+    .content {
+      background: white;
+      padding: 30px;
+      border-radius: 0 0 8px 8px;
+    }
+    h1 {
+      margin: 0;
+      font-size: 24px;
+    }
+    .booking-details {
+      background-color: #e8f5e9;
+      padding: 20px;
+      border-radius: 5px;
+      margin: 20px 0;
+    }
+    .detail-row {
+      display: flex;
+      justify-content: space-between;
+      padding: 8px 0;
+      border-bottom: 1px solid #c8e6c9;
+    }
+    .detail-row:last-child {
+      border-bottom: none;
+    }
+    .fare {
+      font-size: 28px;
+      color: #4caf50;
+      font-weight: bold;
+      text-align: center;
+      padding: 15px;
+      background-color: #f1f8e9;
+      border-radius: 5px;
+      margin: 20px 0;
+    }
+    .info {
+      background-color: #e3f2fd;
+      padding: 15px;
+      border-radius: 5px;
+      border-left: 4px solid #2196f3;
+      margin: 20px 0;
+    }
+    .footer {
+      text-align: center;
+      margin-top: 30px;
+      padding-top: 20px;
+      border-top: 1px solid #e0e0e0;
+      color: #666;
+      font-size: 14px;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="header">
+      <h1>✅ Booking Confirmed!</h1>
+    </div>
+    <div class="content">
+      <p>Hello <strong>{{studentName}}</strong>,</p>
+      
+      <p>Your ride has been successfully booked! Here are your booking details:</p>
+      
+      <div class="booking-details">
+        <div class="detail-row">
+          <span><strong>Driver:</strong></span>
+          <span>{{driverName}}</span>
+        </div>
+        <div class="detail-row">
+          <span><strong>Pickup:</strong></span>
+          <span>{{pickup}}</span>
+        </div>
+        <div class="detail-row">
+          <span><strong>Destination:</strong></span>
+          <span>{{destination}}</span>
+        </div>
+        <div class="detail-row">
+          <span><strong>Departure:</strong></span>
+          <span>{{departureTime}}</span>
+        </div>
+      </div>
+      
+      <div class="fare">
+        ₦{{fare}}
+      </div>
+      
+      <div class="info">
+        <strong>📱 Important Information:</strong><br><br>
+        <ul>
+          <li>The driver will confirm your booking soon</li>
+          <li>You'll receive the driver's contact and vehicle details after confirmation</li>
+          <li>A 4-digit check-in code will be shared at the pickup location</li>
+          <li>Payment methods: Cash or Bank Transfer</li>
+        </ul>
+      </div>
+      
+      <p><strong>What's Next?</strong></p>
+      <ol>
+        <li>Wait for driver confirmation</li>
+        <li>Arrive at the pickup location on time</li>
+        <li>Enter the 4-digit check-in code when you board</li>
+        <li>Complete payment after the ride</li>
+      </ol>
+      
+      <p>Have a safe trip!</p>
+      
+      <p>Best regards,<br><strong>The UniRide Team</strong></p>
+    </div>
+    <div class="footer">
+      © 2024 UniRide. All rights reserved.
+    </div>
+  </div>
+</body>
+</html>
