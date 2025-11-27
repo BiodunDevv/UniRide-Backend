@@ -1,729 +1,789 @@
-const Admin = require("../models/Admin");
-const Student = require("../models/Student");
-const Driver = require("../models/Driver");
-const { generateToken } = require("../middlewares/authMiddleware");
+const jwt = require("jsonwebtoken");
+const bcrypt = require("bcrypt");
+const User = require("../models/User");
+const { v4: uuidv4 } = require("uuid");
+const generateVerificationCode = require("../utils/generateVerificationCode");
 const {
-  validateDeviceOnLogin,
-} = require("../middlewares/deviceLockMiddleware");
-const {
-  sendPasswordChangeEmail,
-  sendPasswordResetEmail,
+  sendEmailVerificationCode,
+  sendPasswordResetCode,
 } = require("../services/emailService");
-const logger = require("../config/logger");
-const crypto = require("crypto");
 
 /**
- * Student login with matric number
+ * Generate JWT token
  */
-exports.studentLogin = async (req, res) => {
-  try {
-    const { matric_no, password, device_id } = req.body;
+const generateToken = (id) => {
+  return jwt.sign({ id }, process.env.JWT_SECRET, {
+    expiresIn: process.env.JWT_EXPIRE,
+  });
+};
 
-    if (!matric_no || !password) {
+/**
+ * @swagger
+ * /api/auth/register:
+ *   post:
+ *     summary: Register a new user (requires email verification)
+ *     tags: [Auth]
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - name
+ *               - email
+ *               - password
+ *             properties:
+ *               name:
+ *                 type: string
+ *               email:
+ *                 type: string
+ *               password:
+ *                 type: string
+ *     responses:
+ *       201:
+ *         description: User registered successfully, verification code sent
+ */
+const register = async (req, res, next) => {
+  try {
+    const { name, email, password } = req.body;
+
+    // Check if user exists
+    const existingUser = await User.findOne({ email });
+    if (existingUser) {
       return res.status(400).json({
         success: false,
-        error: "Please provide matric number and password",
+        message: "User already exists with this email",
       });
     }
 
-    // Find student
-    const student = await Student.findOne({
-      matric_no: matric_no.toUpperCase(),
-    })
-      .select("+password")
-      .populate("college_id", "name code")
-      .populate("department_id", "name code");
+    // Generate verification code
+    const verificationCode = generateVerificationCode();
+    const verificationExpires = new Date(Date.now() + 15 * 60 * 1000); // 15 minutes
 
-    if (!student) {
+    // Create user
+    const user = await User.create({
+      name,
+      email,
+      password,
+      role: "user",
+      email_verified: false,
+      email_verification_code: verificationCode,
+      email_verification_expires: verificationExpires,
+    });
+
+    // Send verification email
+    try {
+      await sendEmailVerificationCode({
+        name: user.name,
+        email: user.email,
+        verificationCode,
+      });
+    } catch (emailError) {
+      console.error("Error sending verification email:", emailError.message);
+      // Continue even if email fails
+    }
+
+    res.status(201).json({
+      success: true,
+      message:
+        "User registered successfully. Please check your email for verification code.",
+      data: {
+        user: {
+          id: user._id,
+          name: user.name,
+          email: user.email,
+          role: user.role,
+          email_verified: user.email_verified,
+        },
+      },
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * @swagger
+ * /api/auth/login:
+ *   post:
+ *     summary: Login user
+ *     tags: [Auth]
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - email
+ *               - password
+ *               - device_id
+ *             properties:
+ *               email:
+ *                 type: string
+ *               password:
+ *                 type: string
+ *               device_id:
+ *                 type: string
+ *     responses:
+ *       200:
+ *         description: Login successful
+ */
+const login = async (req, res, next) => {
+  try {
+    const { email, password, device_id } = req.body;
+
+    // Validate input
+    if (!email || !password || !device_id) {
+      return res.status(400).json({
+        success: false,
+        message: "Please provide email, password, and device_id",
+      });
+    }
+
+    // Check user exists and get password
+    const user = await User.findOne({ email }).select("+password");
+    if (!user) {
       return res.status(401).json({
         success: false,
-        error: "Invalid credentials",
+        message: "Invalid credentials",
+      });
+    }
+
+    // Check if email is verified - auto-resend code if not
+    if (!user.email_verified) {
+      // Generate new verification code
+      const verificationCode = generateVerificationCode();
+      user.email_verification_code = verificationCode;
+      user.email_verification_expires = Date.now() + 15 * 60 * 1000; // 15 minutes
+      await user.save();
+
+      // Send verification email
+      await sendEmailVerificationCode({
+        name: user.name,
+        email: user.email,
+        verificationCode,
+      });
+
+      return res.status(403).json({
+        success: false,
+        message:
+          "Email not verified. A new verification code has been sent to your email.",
+        email_verification_required: true,
+      });
+    }
+
+    // Check if user is flagged
+    if (user.is_flagged) {
+      return res.status(403).json({
+        success: false,
+        message: "Your account has been flagged. Please contact support.",
       });
     }
 
     // Check password
-    const isPasswordMatch = await student.comparePassword(password);
+    const isPasswordMatch = await user.comparePassword(password);
     if (!isPasswordMatch) {
       return res.status(401).json({
         success: false,
-        error: "Invalid credentials",
+        message: "Invalid credentials",
       });
     }
 
-    // Device lock validation
-    if (device_id) {
-      const deviceValidation = await validateDeviceOnLogin(student, device_id);
-      if (!deviceValidation.success) {
-        return res.status(403).json({
-          success: false,
-          error: deviceValidation.message,
-          code: deviceValidation.code,
-        });
-      }
-    }
-
-    // Check if password change is required (first login flag)
-    const requiresPasswordChange = student.requires_password_change === true;
-
-    // Generate token
-    const token = generateToken(student._id, "student");
-
-    // Remove password from response
-    student.password = undefined;
-
-    logger.info(`Student login: ${matric_no}`);
-
-    res.status(200).json({
-      success: true,
-      token,
-      requires_password_change: requiresPasswordChange,
-      user: {
-        id: student._id,
-        matric_no: student.matric_no,
-        first_name: student.first_name,
-        last_name: student.last_name,
-        email: student.email,
-        phone: student.phone,
-        college: student.college_id,
-        department: student.department_id,
-        level: student.level,
-        biometric_enabled: student.biometric_enabled,
-        is_flagged: student.is_flagged,
-      },
-    });
-  } catch (error) {
-    logger.error(`Student login error: ${error.message}`);
-    res.status(500).json({
-      success: false,
-      error: "Server error during login",
-    });
-  }
-};
-
-/**
- * Driver login with email
- */
-exports.driverLogin = async (req, res) => {
-  try {
-    const { email, password } = req.body;
-
-    if (!email || !password) {
-      return res.status(400).json({
-        success: false,
-        error: "Please provide email and password",
-      });
-    }
-
-    // Find driver
-    const driver = await Driver.findOne({ email: email.toLowerCase() }).select(
-      "+password"
-    );
-
-    if (!driver) {
-      return res.status(401).json({
-        success: false,
-        error: "Invalid credentials",
-      });
-    }
-
-    // Check if driver is approved
-    if (driver.status !== "approved") {
+    // Single-device restriction check
+    if (user.device_id && user.device_id !== device_id) {
       return res.status(403).json({
         success: false,
-        error: "Your driver account is not approved yet",
+        message:
+          "This account is already logged in on another device. Please logout from the other device first.",
       });
     }
 
-    // Check password
-    const isPasswordMatch = await driver.comparePassword(password);
-    if (!isPasswordMatch) {
-      return res.status(401).json({
-        success: false,
-        error: "Invalid credentials",
-      });
+    // Update device_id if not set
+    if (!user.device_id) {
+      user.device_id = device_id;
+      await user.save();
     }
 
     // Generate token
-    const token = generateToken(driver._id, "driver");
-
-    // Remove password from response
-    driver.password = undefined;
-
-    logger.info(`Driver login: ${email}`);
+    const token = generateToken(user._id);
 
     res.status(200).json({
       success: true,
-      token,
-      user: {
-        id: driver._id,
-        name: driver.name,
-        email: driver.email,
-        phone: driver.phone,
-        status: driver.status,
-        rating: driver.rating,
-        total_rides: driver.total_rides,
-        vehicle: driver.vehicle,
+      message: "Login successful",
+      data: {
+        user: {
+          id: user._id,
+          name: user.name,
+          email: user.email,
+          role: user.role,
+          biometric_enabled: user.biometric_enabled,
+          first_login: user.first_login,
+        },
+        token,
       },
     });
   } catch (error) {
-    logger.error(`Driver login error: ${error.message}`);
-    res.status(500).json({
-      success: false,
-      error: "Server error during login",
-    });
+    next(error);
   }
 };
 
 /**
- * Admin login with email
+ * @swagger
+ * /api/auth/biometric:
+ *   post:
+ *     summary: Authenticate via biometric token
+ *     tags: [Auth]
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - user_id
+ *               - device_id
+ *             properties:
+ *               user_id:
+ *                 type: string
+ *               device_id:
+ *                 type: string
+ *     responses:
+ *       200:
+ *         description: Biometric authentication successful
  */
-exports.adminLogin = async (req, res) => {
+const biometricAuth = async (req, res, next) => {
   try {
-    const { email, password } = req.body;
+    const { user_id, device_id } = req.body;
 
-    if (!email || !password) {
+    if (!user_id || !device_id) {
       return res.status(400).json({
         success: false,
-        error: "Please provide email and password",
+        message: "Please provide user_id and device_id",
       });
     }
 
-    // Find admin
-    const admin = await Admin.findOne({ email: email.toLowerCase() }).select(
-      "+password"
-    );
-
-    if (!admin) {
-      return res.status(401).json({
+    const user = await User.findById(user_id);
+    if (!user) {
+      return res.status(404).json({
         success: false,
-        error: "Invalid credentials",
+        message: "User not found",
       });
     }
 
-    // Check password
-    const isPasswordMatch = await admin.comparePassword(password);
-    if (!isPasswordMatch) {
-      return res.status(401).json({
+    if (!user.biometric_enabled) {
+      return res.status(403).json({
         success: false,
-        error: "Invalid credentials",
+        message: "Biometric authentication not enabled for this account",
       });
     }
 
-    // Update last login
-    admin.last_login = new Date();
-    await admin.save();
+    // Check device
+    if (user.device_id !== device_id) {
+      return res.status(403).json({
+        success: false,
+        message: "Device mismatch. Please login with password.",
+      });
+    }
 
     // Generate token
-    const token = generateToken(admin._id, "admin");
-
-    // Remove password from response
-    admin.password = undefined;
-
-    logger.info(`Admin login: ${email}`);
+    const token = generateToken(user._id);
 
     res.status(200).json({
       success: true,
-      token,
-      user: {
-        id: admin._id,
-        first_name: admin.first_name,
-        last_name: admin.last_name,
-        email: admin.email,
-        role: admin.role,
+      message: "Biometric authentication successful",
+      data: {
+        user: {
+          id: user._id,
+          name: user.name,
+          email: user.email,
+          role: user.role,
+        },
+        token,
       },
     });
   } catch (error) {
-    logger.error(`Admin login error: ${error.message}`);
-    res.status(500).json({
-      success: false,
-      error: "Server error during login",
-    });
+    next(error);
   }
 };
 
 /**
- * Biometric authentication
+ * @swagger
+ * /api/auth/logout:
+ *   post:
+ *     summary: Logout and free device_id
+ *     tags: [Auth]
+ *     security:
+ *       - bearerAuth: []
+ *     responses:
+ *       200:
+ *         description: Logout successful
  */
-exports.biometricAuth = async (req, res) => {
+const logout = async (req, res, next) => {
   try {
-    const { identifier, biometric_token, device_id } = req.body;
+    const user = await User.findById(req.user._id);
 
-    if (!identifier || !biometric_token || !device_id) {
-      return res.status(400).json({
-        success: false,
-        error: "Missing required fields",
-      });
-    }
-
-    // Find student
-    const student = await Student.findOne({
-      $or: [
-        { matric_no: identifier.toUpperCase() },
-        { email: identifier.toLowerCase() },
-      ],
-    });
-
-    if (!student) {
-      return res.status(401).json({
-        success: false,
-        error: "Invalid credentials",
-      });
-    }
-
-    // Check if biometric is enabled
-    if (!student.biometric_enabled) {
-      return res.status(403).json({
-        success: false,
-        error: "Biometric authentication not enabled for this account",
-      });
-    }
-
-    // Validate device
-    if (student.device_id && student.device_id !== device_id) {
-      return res.status(403).json({
-        success: false,
-        error: "Device mismatch",
-        code: "DEVICE_MISMATCH",
-      });
-    }
-
-    // TODO: Validate biometric_token with mobile client's biometric service
-    // For now, we trust the client has validated the biometric
-
-    // Generate token
-    const token = generateToken(student._id, "student");
-
-    logger.info(`Biometric login: ${student.matric_no}`);
+    // Clear device_id
+    user.device_id = null;
+    await user.save();
 
     res.status(200).json({
       success: true,
-      token,
-      userType: "student",
-      user: {
-        id: student._id,
-        matric_no: student.matric_no,
-        first_name: student.first_name,
-        last_name: student.last_name,
-        email: student.email,
-      },
+      message: "Logout successful",
     });
   } catch (error) {
-    logger.error(`Biometric auth error: ${error.message}`);
-    res.status(500).json({
-      success: false,
-      error: "Server error during biometric authentication",
-    });
+    next(error);
   }
 };
 
 /**
- * Change password
+ * @swagger
+ * /api/auth/change-password:
+ *   patch:
+ *     summary: Change password (required on first login)
+ *     tags: [Auth]
+ *     security:
+ *       - bearerAuth: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - current_password
+ *               - new_password
+ *             properties:
+ *               current_password:
+ *                 type: string
+ *               new_password:
+ *                 type: string
+ *     responses:
+ *       200:
+ *         description: Password changed successfully
  */
-exports.changePassword = async (req, res) => {
+const changePassword = async (req, res, next) => {
   try {
     const { current_password, new_password } = req.body;
-    const userId = req.user._id;
-    const userType = req.userType;
 
     if (!current_password || !new_password) {
       return res.status(400).json({
         success: false,
-        error: "Please provide current and new password",
+        message: "Please provide current and new password",
       });
     }
 
     if (new_password.length < 6) {
       return res.status(400).json({
         success: false,
-        error: "New password must be at least 6 characters",
+        message: "New password must be at least 6 characters",
       });
     }
 
-    // Get user with password
-    let user;
-    if (userType === "admin") {
-      user = await Admin.findById(userId).select("+password");
-    } else if (userType === "student") {
-      user = await Student.findById(userId).select("+password");
-    } else if (userType === "driver") {
-      user = await Driver.findById(userId).select("+password");
-    }
-
-    if (!user) {
-      return res.status(404).json({
-        success: false,
-        error: "User not found",
-      });
-    }
+    const user = await User.findById(req.user._id).select("+password");
 
     // Verify current password
     const isMatch = await user.comparePassword(current_password);
     if (!isMatch) {
       return res.status(401).json({
         success: false,
-        error: "Current password is incorrect",
+        message: "Current password is incorrect",
       });
     }
 
-    // Update password
+    // Update password and first_login flag
     user.password = new_password;
-
-    // Mark password change flag as complete for students
-    if (userType === "student" && user.requires_password_change) {
-      user.requires_password_change = false;
-    }
-
-    // Mark first login as complete
-    if (user.first_login) {
-      user.first_login = false;
-
-      // Activate driver after first password change
-      if (userType === "driver") {
-        user.status = "active";
-      }
-    }
-
+    user.first_login = false;
     await user.save();
-
-    // Send confirmation email
-    const email = user.email;
-    const name = user.first_name || user.name;
-    await sendPasswordChangeEmail(email, name);
-
-    logger.info(`Password changed for ${userType}: ${userId}`);
 
     res.status(200).json({
       success: true,
       message: "Password changed successfully",
     });
   } catch (error) {
-    logger.error(`Change password error: ${error.message}`);
-    res.status(500).json({
-      success: false,
-      error: "Server error during password change",
-    });
+    next(error);
   }
 };
 
 /**
- * Logout (placeholder for token blacklist implementation)
+ * @swagger
+ * /api/auth/enable-biometric:
+ *   patch:
+ *     summary: Enable biometric authentication
+ *     tags: [Auth]
+ *     security:
+ *       - bearerAuth: []
+ *     responses:
+ *       200:
+ *         description: Biometric enabled successfully
  */
-exports.logout = async (req, res) => {
+const enableBiometric = async (req, res, next) => {
   try {
-    // TODO: Add token to blacklist in Redis
-    const userId = req.user._id;
-    const userType = req.userType;
+    const user = await User.findById(req.user._id);
 
-    logger.info(`${userType} logout: ${userId}`);
-
-    res.status(200).json({
-      success: true,
-      message: "Logged out successfully",
-    });
-  } catch (error) {
-    logger.error(`Logout error: ${error.message}`);
-    res.status(500).json({
-      success: false,
-      error: "Server error during logout",
-    });
-  }
-};
-
-/**
- * Get current user profile
- */
-exports.getProfile = async (req, res) => {
-  try {
-    const user = req.user;
-    const userType = req.userType;
-
-    let populatedUser;
-    if (userType === "student") {
-      populatedUser = await Student.findById(user._id)
-        .populate("college_id", "name code")
-        .populate("department_id", "name code")
-        .lean();
-    } else {
-      populatedUser = user;
-    }
-
-    res.status(200).json({
-      success: true,
-      userType,
-      user: populatedUser,
-    });
-  } catch (error) {
-    logger.error(`Get profile error: ${error.message}`);
-    res.status(500).json({
-      success: false,
-      error: "Server error",
-    });
-  }
-};
-
-/**
- * Forgot password - Student
- */
-exports.studentForgotPassword = async (req, res) => {
-  try {
-    const { matric_no, email } = req.body;
-
-    if (!matric_no && !email) {
-      return res.status(400).json({
-        success: false,
-        error: "Please provide matric number or email",
-      });
-    }
-
-    // Find student
-    const query = matric_no
-      ? { matric_no: matric_no.toUpperCase() }
-      : { email: email.toLowerCase() };
-
-    const student = await Student.findOne(query);
-
-    if (!student) {
-      // Don't reveal if user exists
-      return res.status(200).json({
-        success: true,
-        message:
-          "If the account exists, a password reset code will be sent to the registered email",
-      });
-    }
-
-    // Generate 6-digit reset code
-    const resetCode = Math.floor(100000 + Math.random() * 900000).toString();
-
-    // Save reset code and expiry (1 hour)
-    student.password_reset_token = resetCode;
-    student.password_reset_expires = Date.now() + 3600000; // 1 hour
-    await student.save({ validateBeforeSave: false });
-
-    // Send reset email with code
-    await sendPasswordResetEmail(
-      student.email,
-      student.first_name,
-      resetCode,
-      "student"
-    );
-
-    logger.info(`Password reset requested for student: ${student.matric_no}`);
-
-    res.status(200).json({
-      success: true,
-      message: "A 6-digit password reset code has been sent to your email",
-    });
-  } catch (error) {
-    logger.error(`Student forgot password error: ${error.message}`);
-    res.status(500).json({
-      success: false,
-      error: "Server error. Please try again later.",
-    });
-  }
-};
-
-/**
- * Forgot password - Driver
- */
-exports.driverForgotPassword = async (req, res) => {
-  try {
-    const { email } = req.body;
-
-    if (!email) {
-      return res.status(400).json({
-        success: false,
-        error: "Please provide your email",
-      });
-    }
-
-    const driver = await Driver.findOne({ email: email.toLowerCase() });
-
-    if (!driver) {
-      return res.status(200).json({
-        success: true,
-        message:
-          "If the account exists, a password reset code will be sent to the registered email",
-      });
-    }
-
-    // Generate 6-digit reset code
-    const resetCode = Math.floor(100000 + Math.random() * 900000).toString();
-
-    driver.password_reset_token = resetCode;
-    driver.password_reset_expires = Date.now() + 3600000;
-    await driver.save({ validateBeforeSave: false });
-
-    await sendPasswordResetEmail(
-      driver.email,
-      driver.name,
-      resetCode,
-      "driver"
-    );
-
-    logger.info(`Password reset requested for driver: ${driver.email}`);
-
-    res.status(200).json({
-      success: true,
-      message: "A 6-digit password reset code has been sent to your email",
-    });
-  } catch (error) {
-    logger.error(`Driver forgot password error: ${error.message}`);
-    res.status(500).json({
-      success: false,
-      error: "Server error. Please try again later.",
-    });
-  }
-};
-
-/**
- * Forgot password - Admin
- */
-exports.adminForgotPassword = async (req, res) => {
-  try {
-    const { email } = req.body;
-
-    if (!email) {
-      return res.status(400).json({
-        success: false,
-        error: "Please provide your email",
-      });
-    }
-
-    const admin = await Admin.findOne({ email: email.toLowerCase() });
-
-    if (!admin) {
-      return res.status(200).json({
-        success: true,
-        message:
-          "If the account exists, a password reset code will be sent to the registered email",
-      });
-    }
-
-    // Generate 6-digit reset code
-    const resetCode = Math.floor(100000 + Math.random() * 900000).toString();
-
-    admin.password_reset_token = resetCode;
-    admin.password_reset_expires = Date.now() + 3600000;
-    await admin.save({ validateBeforeSave: false });
-
-    await sendPasswordResetEmail(
-      admin.email,
-      `${admin.first_name} ${admin.last_name}`,
-      resetCode,
-      "admin"
-    );
-
-    logger.info(`Password reset requested for admin: ${admin.email}`);
-
-    res.status(200).json({
-      success: true,
-      message: "A 6-digit password reset code has been sent to your email",
-    });
-  } catch (error) {
-    logger.error(`Admin forgot password error: ${error.message}`);
-    res.status(500).json({
-      success: false,
-      error: "Server error. Please try again later.",
-    });
-  }
-};
-
-/**
- * Reset password with code
- */
-exports.resetPassword = async (req, res) => {
-  try {
-    const { email, matric_no, code, new_password, user_type } = req.body;
-
-    if (!code || !new_password || !user_type) {
-      return res.status(400).json({
-        success: false,
-        error: "Please provide code, new password, and user type",
-      });
-    }
-
-    if (!email && !matric_no) {
-      return res.status(400).json({
-        success: false,
-        error: "Please provide email or matric number",
-      });
-    }
-
-    if (new_password.length < 6) {
-      return res.status(400).json({
-        success: false,
-        error: "Password must be at least 6 characters",
-      });
-    }
-
-    // Find user by code and check expiry
-    let user;
-    let Model;
-    let query = {
-      password_reset_token: code,
-      password_reset_expires: { $gt: Date.now() },
-    };
-
-    if (user_type === "student") {
-      Model = Student;
-      // For students, allow lookup by either email or matric_no
-      if (matric_no) {
-        query.matric_no = matric_no.toUpperCase();
-      } else if (email) {
-        query.email = email.toLowerCase();
-      }
-    } else if (user_type === "driver") {
-      Model = Driver;
-      if (email) {
-        query.email = email.toLowerCase();
-      }
-    } else if (user_type === "admin") {
-      Model = Admin;
-      if (email) {
-        query.email = email.toLowerCase();
-      }
-    } else {
-      return res.status(400).json({
-        success: false,
-        error: "Invalid user type",
-      });
-    }
-
-    user = await Model.findOne(query);
-
-    if (!user) {
-      return res.status(400).json({
-        success: false,
-        error: "Invalid or expired reset code",
-      });
-    }
-
-    // Update password
-    user.password = new_password;
-    user.password_reset_token = undefined;
-    user.password_reset_expires = undefined;
-
-    // Clear password change requirement if student
-    if (user_type === "student" && user.requires_password_change) {
-      user.requires_password_change = false;
-    }
-
+    user.biometric_enabled = true;
     await user.save();
 
-    logger.info(
-      `Password reset successful for ${user_type}: ${user.email || user.matric_no}`
+    res.status(200).json({
+      success: true,
+      message: "Biometric authentication enabled",
+      data: {
+        biometric_enabled: true,
+      },
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * @swagger
+ * /api/auth/me:
+ *   get:
+ *     summary: Get current user profile
+ *     tags: [Auth]
+ *     security:
+ *       - bearerAuth: []
+ *     responses:
+ *       200:
+ *         description: User profile retrieved successfully
+ */
+const getMe = async (req, res, next) => {
+  try {
+    const user = await User.findById(req.user._id);
+
+    res.status(200).json({
+      success: true,
+      data: user,
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * @swagger
+ * /api/auth/verify-email:
+ *   post:
+ *     summary: Verify email with 6-digit code
+ *     tags: [Auth]
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - email
+ *               - code
+ *             properties:
+ *               email:
+ *                 type: string
+ *               code:
+ *                 type: string
+ *     responses:
+ *       200:
+ *         description: Email verified successfully
+ */
+const verifyEmail = async (req, res, next) => {
+  try {
+    const { email, code } = req.body;
+
+    const user = await User.findOne({ email }).select(
+      "+email_verification_code +email_verification_expires"
     );
+
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: "User not found",
+      });
+    }
+
+    if (user.email_verified) {
+      return res.status(400).json({
+        success: false,
+        message: "Email already verified",
+      });
+    }
+
+    if (!user.email_verification_code || !user.email_verification_expires) {
+      return res.status(400).json({
+        success: false,
+        message: "No verification code found. Please request a new one.",
+      });
+    }
+
+    if (new Date() > user.email_verification_expires) {
+      return res.status(400).json({
+        success: false,
+        message: "Verification code has expired. Please request a new one.",
+      });
+    }
+
+    if (user.email_verification_code !== code) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid verification code",
+      });
+    }
+
+    // Mark email as verified
+    user.email_verified = true;
+    user.email_verification_code = undefined;
+    user.email_verification_expires = undefined;
+    await user.save();
+
+    // Generate token
+    const token = generateToken(user._id);
+
+    res.status(200).json({
+      success: true,
+      message: "Email verified successfully",
+      data: {
+        user: {
+          id: user._id,
+          name: user.name,
+          email: user.email,
+          role: user.role,
+          email_verified: user.email_verified,
+        },
+        token,
+      },
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * @swagger
+ * /api/auth/resend-verification:
+ *   post:
+ *     summary: Resend email verification code
+ *     tags: [Auth]
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - email
+ *             properties:
+ *               email:
+ *                 type: string
+ *     responses:
+ *       200:
+ *         description: Verification code sent successfully
+ */
+const resendVerificationCode = async (req, res, next) => {
+  try {
+    const { email } = req.body;
+
+    const user = await User.findOne({ email });
+
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: "User not found",
+      });
+    }
+
+    if (user.email_verified) {
+      return res.status(400).json({
+        success: false,
+        message: "Email already verified",
+      });
+    }
+
+    // Generate new verification code
+    const verificationCode = generateVerificationCode();
+    const verificationExpires = new Date(Date.now() + 15 * 60 * 1000);
+
+    user.email_verification_code = verificationCode;
+    user.email_verification_expires = verificationExpires;
+    await user.save();
+
+    // Send verification email
+    try {
+      await sendEmailVerificationCode({
+        name: user.name,
+        email: user.email,
+        verificationCode,
+      });
+    } catch (emailError) {
+      console.error("Error sending verification email:", emailError.message);
+      return res.status(500).json({
+        success: false,
+        message: "Failed to send verification email",
+      });
+    }
+
+    res.status(200).json({
+      success: true,
+      message: "Verification code sent successfully",
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * @swagger
+ * /api/auth/forgot-password:
+ *   post:
+ *     summary: Request password reset code
+ *     tags: [Auth]
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - email
+ *             properties:
+ *               email:
+ *                 type: string
+ *     responses:
+ *       200:
+ *         description: Password reset code sent successfully
+ */
+const forgotPassword = async (req, res, next) => {
+  try {
+    const { email } = req.body;
+
+    const user = await User.findOne({ email });
+
+    if (!user) {
+      // Don't reveal if user exists or not for security
+      return res.status(200).json({
+        success: true,
+        message:
+          "If an account with that email exists, a password reset code has been sent.",
+      });
+    }
+
+    // Generate reset code
+    const resetCode = generateVerificationCode();
+    const resetExpires = new Date(Date.now() + 15 * 60 * 1000);
+
+    user.password_reset_code = resetCode;
+    user.password_reset_expires = resetExpires;
+    await user.save();
+
+    // Send reset email
+    try {
+      await sendPasswordResetCode({
+        name: user.name,
+        email: user.email,
+        resetCode,
+      });
+    } catch (emailError) {
+      console.error("Error sending password reset email:", emailError.message);
+    }
 
     res.status(200).json({
       success: true,
       message:
-        "Password reset successful. You can now login with your new password.",
+        "If an account with that email exists, a password reset code has been sent.",
     });
   } catch (error) {
-    logger.error(`Reset password error: ${error.message}`);
-    res.status(500).json({
-      success: false,
-      error: "Server error during password reset",
-    });
+    next(error);
   }
+};
+
+/**
+ * @swagger
+ * /api/auth/reset-password:
+ *   post:
+ *     summary: Reset password with code
+ *     tags: [Auth]
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - email
+ *               - code
+ *               - newPassword
+ *             properties:
+ *               email:
+ *                 type: string
+ *               code:
+ *                 type: string
+ *               newPassword:
+ *                 type: string
+ *     responses:
+ *       200:
+ *         description: Password reset successfully
+ */
+const resetPassword = async (req, res, next) => {
+  try {
+    const { email, code, newPassword } = req.body;
+
+    const user = await User.findOne({ email }).select(
+      "+password_reset_code +password_reset_expires +password"
+    );
+
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: "User not found",
+      });
+    }
+
+    if (!user.password_reset_code || !user.password_reset_expires) {
+      return res.status(400).json({
+        success: false,
+        message: "No password reset request found. Please request a new code.",
+      });
+    }
+
+    if (new Date() > user.password_reset_expires) {
+      return res.status(400).json({
+        success: false,
+        message: "Reset code has expired. Please request a new one.",
+      });
+    }
+
+    if (user.password_reset_code !== code) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid reset code",
+      });
+    }
+
+    // Update password
+    user.password = newPassword;
+    user.password_reset_code = undefined;
+    user.password_reset_expires = undefined;
+    await user.save();
+
+    res.status(200).json({
+      success: true,
+      message:
+        "Password reset successfully. You can now login with your new password.",
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+module.exports = {
+  register,
+  verifyEmail,
+  resendVerificationCode,
+  forgotPassword,
+  resetPassword,
+  login,
+  biometricAuth,
+  logout,
+  changePassword,
+  enableBiometric,
+  getMe,
 };

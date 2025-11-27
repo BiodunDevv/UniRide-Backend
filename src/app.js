@@ -1,33 +1,20 @@
 const express = require("express");
 const cors = require("cors");
 const helmet = require("helmet");
-const compression = require("compression");
-const mongoSanitize = require("express-mongo-sanitize");
-const xss = require("xss-clean");
-const hpp = require("hpp");
+const morgan = require("morgan");
 const swaggerUi = require("swagger-ui-express");
-const { swaggerSpec } = require("./config/swagger");
-const { notFound, errorHandler } = require("./middlewares/errorHandler");
-const { globalRateLimiter } = require("./middlewares/rateLimiter");
-const logger = require("./config/logger");
-const appConfig = require("./config/appConfig");
+const swaggerSpec = require("./config/swagger");
+const errorHandler = require("./middlewares/errorHandler");
 
 // Import routes
 const authRoutes = require("./routes/authRoutes");
-const adminRoutes = require("./routes/adminRoutes");
-const studentRoutes = require("./routes/studentRoutes");
 const driverRoutes = require("./routes/driverRoutes");
+const adminRoutes = require("./routes/adminRoutes");
 const rideRoutes = require("./routes/rideRoutes");
 const bookingRoutes = require("./routes/bookingRoutes");
-const collegeRoutes = require("./routes/collegeRoutes");
-const departmentRoutes = require("./routes/departmentRoutes");
-const applicationRoutes = require("./routes/applicationRoutes");
+const supportRoutes = require("./routes/supportRoutes");
 
-// Initialize Express app
 const app = express();
-
-// Trust proxy for rate limiting behind reverse proxies
-app.set("trust proxy", 1);
 
 // Security middleware
 app.use(helmet());
@@ -35,33 +22,37 @@ app.use(helmet());
 // CORS configuration
 app.use(
   cors({
-    origin: appConfig.corsOrigin,
+    origin: process.env.FRONTEND_URL || "*",
     credentials: true,
   })
 );
 
-// Compression middleware
-app.use(compression());
-
 // Body parser middleware
-app.use(express.json({ limit: "10mb" }));
-app.use(express.urlencoded({ extended: true, limit: "10mb" }));
+app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
 
-// Sanitize data
-app.use(mongoSanitize());
-app.use(xss());
+// Logging middleware
+if (process.env.NODE_ENV === "development") {
+  app.use(morgan("dev"));
+}
 
-// Prevent HTTP parameter pollution
-app.use(hpp());
-
-// Global rate limiter
-app.use(globalRateLimiter);
-
-// Request logging middleware
-app.use((req, res, next) => {
-  logger.info(`${req.method} ${req.originalUrl} - ${req.ip}`);
-  next();
-});
+// API Documentation
+app.use(
+  "/api-docs",
+  swaggerUi.serve,
+  swaggerUi.setup(swaggerSpec, {
+    customCss: ".swagger-ui .topbar { display: none }",
+    customSiteTitle: "UniRide API Documentation",
+  })
+);
+app.use(
+  "/docs",
+  swaggerUi.serve,
+  swaggerUi.setup(swaggerSpec, {
+    customCss: ".swagger-ui .topbar { display: none }",
+    customSiteTitle: "UniRide API Documentation",
+  })
+);
 
 // Health check endpoint
 app.get("/health", (req, res) => {
@@ -72,24 +63,36 @@ app.get("/health", (req, res) => {
   });
 });
 
-// API documentation
-app.use("/api-docs", swaggerUi.serve, swaggerUi.setup(swaggerSpec));
-
-// Mount routes
+// API Routes
 app.use("/api/auth", authRoutes);
+app.use("/api/driver", driverRoutes);
 app.use("/api/admin", adminRoutes);
-app.use("/api/students", studentRoutes);
-app.use("/api/drivers", driverRoutes);
 app.use("/api/rides", rideRoutes);
-app.use("/api/bookings", bookingRoutes);
-app.use("/api/colleges", collegeRoutes);
-app.use("/api/departments", departmentRoutes);
-app.use("/api/applications", applicationRoutes);
+app.use("/api/booking", bookingRoutes);
+app.use("/api/support", supportRoutes);
+
+// Welcome route
+app.get("/", (req, res) => {
+  res.status(200).json({
+    success: true,
+    message: "Welcome to UniRide API",
+    version: "1.0.0",
+    documentation: {
+      swagger: "/api-docs",
+      docs: "/docs",
+    },
+  });
+});
 
 // 404 handler
-app.use(notFound);
+app.use((req, res) => {
+  res.status(404).json({
+    success: false,
+    message: "Route not found",
+  });
+});
 
-// Global error handler
+// Error handling middleware (must be last)
 app.use(errorHandler);
 
 module.exports = app;

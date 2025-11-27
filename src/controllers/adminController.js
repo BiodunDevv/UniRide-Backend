@@ -1,427 +1,876 @@
-const Admin = require('../models/Admin');
-const College = require('../models/College');
-const Department = require('../models/Department');
-const Application = require('../models/Application');
-const Driver = require('../models/Driver');
-const Student = require('../models/Student');
-const Ride = require('../models/Ride');
-const Booking = require('../models/Booking');
-const appConfig = require('../config/appConfig');
-const { sendDriverApprovalEmail, sendDriverRejectionEmail } = require('../services/emailService');
-const { logAdminAction } = require('../services/auditService');
-const { getCachedAdminOverview, cacheAdminOverview } = require('../services/cacheService');
-const logger = require('../config/logger');
+const User = require("../models/User");
+const Driver = require("../models/Driver");
+const DriverApplication = require("../models/DriverApplication");
+const FarePolicy = require("../models/FarePolicy");
+const {
+  sendDriverApprovalEmail,
+  sendDriverRejectionEmail,
+  sendAdminInvitationEmail,
+} = require("../services/emailService");
+const bcrypt = require("bcrypt");
 
 /**
- * Create college
+ * @swagger
+ * /api/admin/create:
+ *   post:
+ *     summary: Create admin account (Super Admin only)
+ *     tags: [Admin]
+ *     security:
+ *       - bearerAuth: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - name
+ *               - email
+ *               - password
+ *             properties:
+ *               name:
+ *                 type: string
+ *               email:
+ *                 type: string
+ *               password:
+ *                 type: string
+ *     responses:
+ *       201:
+ *         description: Admin created successfully
  */
-exports.createCollege = async (req, res) => {
+const createAdmin = async (req, res, next) => {
   try {
-    const { name, code } = req.body;
-    const adminId = req.user._id;
+    const { name, email, password } = req.body;
 
-    const college = await College.create({
-      name,
-      code,
-      created_by: adminId,
-    });
-
-    await logAdminAction.createCollege(adminId, college._id, { name, code }, req);
-
-    logger.info(`College created: ${name} by admin ${adminId}`);
-
-    res.status(201).json({
-      success: true,
-      message: 'College created successfully',
-      college,
-    });
-  } catch (error) {
-    logger.error(`Create college error: ${error.message}`);
-    res.status(500).json({
-      success: false,
-      error: error.code === 11000 ? 'College name already exists' : 'Failed to create college',
-    });
-  }
-};
-
-/**
- * Create department
- */
-exports.createDepartment = async (req, res) => {
-  try {
-    const { name, code, college_id } = req.body;
-    const adminId = req.user._id;
-
-    // Verify college exists
-    const college = await College.findById(college_id);
-    if (!college) {
-      return res.status(404).json({
+    // Check if user exists
+    const existingUser = await User.findOne({ email });
+    if (existingUser) {
+      return res.status(400).json({
         success: false,
-        error: 'College not found',
+        message: "User already exists with this email",
       });
     }
 
-    const department = await Department.create({
+    // Create admin
+    const admin = await User.create({
       name,
-      code,
-      college_id,
-      created_by: adminId,
-    });
-
-    await logAdminAction.createDepartment(adminId, department._id, { name, code, college_id }, req);
-
-    logger.info(`Department created: ${name} by admin ${adminId}`);
-
-    res.status(201).json({
-      success: true,
-      message: 'Department created successfully',
-      department,
-    });
-  } catch (error) {
-    logger.error(`Create department error: ${error.message}`);
-    res.status(500).json({
-      success: false,
-      error: error.code === 11000 ? 'Department already exists in this college' : 'Failed to create department',
-    });
-  }
-};
-
-/**
- * Create admin
- */
-exports.createAdmin = async (req, res) => {
-  try {
-    const { first_name, last_name, email, password, role } = req.body;
-    const creatorId = req.user._id;
-
-    // Only super_admin can create admins
-    if (req.user.role !== 'super_admin') {
-      return res.status(403).json({
-        success: false,
-        error: 'Only super admins can create other admins',
-      });
-    }
-
-    const admin = await Admin.create({
-      first_name,
-      last_name,
       email,
       password,
-      role: role || 'admin',
+      role: "admin",
+      email_verified: false,
+      first_login: true,
     });
 
-    logger.info(`Admin created: ${email} by super admin ${creatorId}`);
+    // Send admin invitation email
+    try {
+      await sendAdminInvitationEmail({
+        name: admin.name,
+        email: admin.email,
+        role: admin.role,
+        createdBy: req.user.name,
+      });
+    } catch (emailError) {
+      console.error(
+        "Failed to send admin invitation email:",
+        emailError.message
+      );
+      // Don't fail the creation if email fails
+    }
 
     res.status(201).json({
       success: true,
-      message: 'Admin created successfully',
-      admin: {
+      message:
+        "Admin created successfully. Invitation email sent. They must verify their email before logging in.",
+      data: {
         id: admin._id,
-        first_name: admin.first_name,
-        last_name: admin.last_name,
+        name: admin.name,
+        email: admin.email,
+        role: admin.role,
+        email_verified: admin.email_verified,
+      },
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * @swagger
+ * /api/admin/drivers/pending:
+ *   get:
+ *     summary: Get all pending driver applications
+ *     tags: [Admin]
+ *     security:
+ *       - bearerAuth: []
+ *     responses:
+ *       200:
+ *         description: Pending applications retrieved
+ */
+const getPendingApplications = async (req, res, next) => {
+  try {
+    const applications = await DriverApplication.find({ status: "pending" })
+      .populate("user_id", "name email")
+      .sort({ submitted_at: -1 });
+
+    res.status(200).json({
+      success: true,
+      count: applications.length,
+      data: applications,
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * @swagger
+ * /api/admin/drivers/all:
+ *   get:
+ *     summary: Get all driver applications
+ *     tags: [Admin]
+ *     security:
+ *       - bearerAuth: []
+ *     responses:
+ *       200:
+ *         description: Applications retrieved
+ */
+const getAllApplications = async (req, res, next) => {
+  try {
+    const { status } = req.query;
+
+    const filter = {};
+    if (status) {
+      filter.status = status;
+    }
+
+    const applications = await DriverApplication.find(filter)
+      .populate("user_id", "name email")
+      .populate("reviewed_by", "name email")
+      .sort({ submitted_at: -1 });
+
+    res.status(200).json({
+      success: true,
+      count: applications.length,
+      data: applications,
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * @swagger
+ * /api/admin/drivers/approve/{id}:
+ *   patch:
+ *     summary: Approve driver application
+ *     tags: [Admin]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: string
+ *     responses:
+ *       200:
+ *         description: Driver approved successfully
+ */
+const approveDriver = async (req, res, next) => {
+  try {
+    const { id } = req.params;
+
+    const application = await DriverApplication.findById(id).populate(
+      "user_id"
+    );
+
+    if (!application) {
+      return res.status(404).json({
+        success: false,
+        message: "Application not found",
+      });
+    }
+
+    if (application.status !== "pending") {
+      return res.status(400).json({
+        success: false,
+        message: `Application already ${application.status}`,
+      });
+    }
+
+    // Update application
+    application.status = "approved";
+    application.reviewed_by = req.user._id;
+    application.reviewed_at = new Date();
+    await application.save();
+
+    // Create driver profile
+    const driver = await Driver.create({
+      user_id: application.user_id._id,
+      phone: application.phone,
+      vehicle_model: application.vehicle_model,
+      plate_number: application.plate_number,
+      available_seats: application.available_seats,
+      drivers_license: application.drivers_license,
+      application_status: "approved",
+      approved_by: req.user._id,
+      approval_date: new Date(),
+      status: "inactive", // Driver needs to go online manually
+    });
+
+    // Update user role to driver
+    await User.findByIdAndUpdate(application.user_id._id, { role: "driver" });
+
+    // Generate temporary password (first name)
+    const temporaryPassword = application.user_id.name.split(" ")[0];
+
+    // Hash and update password
+    const salt = await bcrypt.genSalt(10);
+    const hashedPassword = await bcrypt.hash(temporaryPassword, salt);
+    await User.findByIdAndUpdate(application.user_id._id, {
+      password: hashedPassword,
+      first_login: true,
+    });
+
+    // Send approval email with credentials
+    try {
+      await sendDriverApprovalEmail({
+        name: application.user_id.name,
+        email: application.user_id.email,
+        temporaryPassword,
+      });
+    } catch (emailError) {
+      console.error("Failed to send approval email:", emailError.message);
+      // Don't fail the approval if email fails
+    }
+
+    res.status(200).json({
+      success: true,
+      message:
+        "Driver approved successfully. Email sent with login credentials.",
+      data: driver,
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * @swagger
+ * /api/admin/drivers/reject/{id}:
+ *   patch:
+ *     summary: Reject driver application
+ *     tags: [Admin]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: string
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - rejection_reason
+ *             properties:
+ *               rejection_reason:
+ *                 type: string
+ *     responses:
+ *       200:
+ *         description: Driver rejected successfully
+ */
+const rejectDriver = async (req, res, next) => {
+  try {
+    const { id } = req.params;
+    const { rejection_reason } = req.body;
+
+    if (!rejection_reason) {
+      return res.status(400).json({
+        success: false,
+        message: "Please provide a rejection reason",
+      });
+    }
+
+    const application = await DriverApplication.findById(id).populate(
+      "user_id"
+    );
+
+    if (!application) {
+      return res.status(404).json({
+        success: false,
+        message: "Application not found",
+      });
+    }
+
+    if (application.status !== "pending") {
+      return res.status(400).json({
+        success: false,
+        message: `Application already ${application.status}`,
+      });
+    }
+
+    // Update application
+    application.status = "rejected";
+    application.reviewed_by = req.user._id;
+    application.reviewed_at = new Date();
+    application.rejection_reason = rejection_reason;
+    await application.save();
+
+    // Send rejection email
+    try {
+      await sendDriverRejectionEmail({
+        name: application.user_id.name,
+        email: application.user_id.email,
+        rejectionReason: rejection_reason,
+      });
+    } catch (emailError) {
+      console.error("Failed to send rejection email:", emailError.message);
+    }
+
+    res.status(200).json({
+      success: true,
+      message: "Driver application rejected",
+      data: application,
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * @swagger
+ * /api/admin/drivers/list:
+ *   get:
+ *     summary: Get all approved drivers
+ *     tags: [Admin]
+ *     security:
+ *       - bearerAuth: []
+ *     responses:
+ *       200:
+ *         description: Drivers retrieved successfully
+ */
+const getAllDrivers = async (req, res, next) => {
+  try {
+    const drivers = await Driver.find()
+      .populate("user_id", "name email")
+      .sort({ createdAt: -1 });
+
+    res.status(200).json({
+      success: true,
+      count: drivers.length,
+      data: drivers,
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * @swagger
+ * /api/admin/fare-policy:
+ *   get:
+ *     summary: Get current fare policy
+ *     tags: [Admin]
+ *     security:
+ *       - bearerAuth: []
+ *     responses:
+ *       200:
+ *         description: Fare policy retrieved
+ */
+const getFarePolicy = async (req, res, next) => {
+  try {
+    let farePolicy = await FarePolicy.findOne().sort({ updatedAt: -1 });
+
+    if (!farePolicy) {
+      farePolicy = await FarePolicy.create({
+        mode: "admin",
+        base_fare: 500,
+        per_km_rate: 50,
+        per_minute_rate: 10,
+        minimum_fare: 200,
+      });
+    }
+
+    res.status(200).json({
+      success: true,
+      data: farePolicy,
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * @swagger
+ * /api/admin/fare-policy:
+ *   patch:
+ *     summary: Update fare policy
+ *     tags: [Admin]
+ *     security:
+ *       - bearerAuth: []
+ *     requestBody:
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             properties:
+ *               mode:
+ *                 type: string
+ *                 enum: [admin, driver, distance_auto]
+ *               base_fare:
+ *                 type: number
+ *               per_km_rate:
+ *                 type: number
+ *               per_minute_rate:
+ *                 type: number
+ *               minimum_fare:
+ *                 type: number
+ *     responses:
+ *       200:
+ *         description: Fare policy updated
+ */
+const updateFarePolicy = async (req, res, next) => {
+  try {
+    const { mode, base_fare, per_km_rate, per_minute_rate, minimum_fare } =
+      req.body;
+
+    let farePolicy = await FarePolicy.findOne().sort({ updatedAt: -1 });
+
+    if (!farePolicy) {
+      farePolicy = new FarePolicy();
+    }
+
+    // Update fields if provided
+    if (mode) farePolicy.mode = mode;
+    if (base_fare !== undefined) farePolicy.base_fare = base_fare;
+    if (per_km_rate !== undefined) farePolicy.per_km_rate = per_km_rate;
+    if (per_minute_rate !== undefined)
+      farePolicy.per_minute_rate = per_minute_rate;
+    if (minimum_fare !== undefined) farePolicy.minimum_fare = minimum_fare;
+    farePolicy.updated_by = req.user._id;
+
+    await farePolicy.save();
+
+    res.status(200).json({
+      success: true,
+      message: "Fare policy updated successfully",
+      data: farePolicy,
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * @swagger
+ * /api/admin/list:
+ *   get:
+ *     summary: Get all admins and super admins
+ *     tags: [Admin]
+ *     security:
+ *       - bearerAuth: []
+ *     responses:
+ *       200:
+ *         description: Admins retrieved successfully
+ */
+const getAllAdmins = async (req, res, next) => {
+  try {
+    const admins = await User.find({
+      role: { $in: ["admin", "super_admin"] },
+    })
+      .select("-password")
+      .sort({ createdAt: -1 });
+
+    res.status(200).json({
+      success: true,
+      count: admins.length,
+      data: admins,
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * @swagger
+ * /api/admin/users:
+ *   get:
+ *     summary: Get all regular users (excluding drivers and admins)
+ *     tags: [Admin]
+ *     security:
+ *       - bearerAuth: []
+ *     responses:
+ *       200:
+ *         description: Users retrieved successfully
+ */
+const getAllUsers = async (req, res, next) => {
+  try {
+    const users = await User.find({
+      role: "user",
+    })
+      .select("-password")
+      .sort({ createdAt: -1 });
+
+    res.status(200).json({
+      success: true,
+      count: users.length,
+      data: users,
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * @swagger
+ * /api/admin/update/{id}:
+ *   patch:
+ *     summary: Update admin role (Super Admin only)
+ *     tags: [Admin]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: string
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             properties:
+ *               role:
+ *                 type: string
+ *                 enum: [admin, super_admin]
+ *     responses:
+ *       200:
+ *         description: Admin updated successfully
+ */
+const updateAdmin = async (req, res, next) => {
+  try {
+    const { id } = req.params;
+    const { role } = req.body;
+
+    if (!role || !["admin", "super_admin"].includes(role)) {
+      return res.status(400).json({
+        success: false,
+        message: "Valid role is required (admin or super_admin)",
+      });
+    }
+
+    const admin = await User.findById(id);
+
+    if (!admin) {
+      return res.status(404).json({
+        success: false,
+        message: "Admin not found",
+      });
+    }
+
+    if (!["admin", "super_admin"].includes(admin.role)) {
+      return res.status(400).json({
+        success: false,
+        message: "User is not an admin",
+      });
+    }
+
+    admin.role = role;
+    await admin.save();
+
+    res.status(200).json({
+      success: true,
+      message: "Admin role updated successfully",
+      data: {
+        id: admin._id,
+        name: admin.name,
         email: admin.email,
         role: admin.role,
       },
     });
   } catch (error) {
-    logger.error(`Create admin error: ${error.message}`);
-    res.status(500).json({
-      success: false,
-      error: error.code === 11000 ? 'Email already exists' : 'Failed to create admin',
-    });
+    next(error);
   }
 };
 
 /**
- * Get pending driver applications
+ * @swagger
+ * /api/admin/delete/{id}:
+ *   delete:
+ *     summary: Delete admin (soft delete by default, hard delete with ?force=true)
+ *     tags: [Admin]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: string
+ *       - in: query
+ *         name: force
+ *         schema:
+ *           type: boolean
+ *     responses:
+ *       200:
+ *         description: Admin deleted successfully
  */
-exports.getPendingApplications = async (req, res) => {
+const deleteAdmin = async (req, res, next) => {
   try {
-    const applications = await Application.find({ status: 'pending' })
-      .sort({ submitted_at: -1 })
-      .lean();
+    const { id } = req.params;
+    const { force } = req.query;
 
-    res.status(200).json({
-      success: true,
-      count: applications.length,
-      applications,
-    });
-  } catch (error) {
-    logger.error(`Get pending applications error: ${error.message}`);
-    res.status(500).json({
-      success: false,
-      error: 'Failed to fetch applications',
-    });
-  }
-};
+    const admin = await User.findById(id);
 
-/**
- * Approve driver application
- */
-exports.approveDriver = async (req, res) => {
-  try {
-    const { applicationId } = req.params;
-    const adminId = req.user._id;
-
-    const application = await Application.findById(applicationId);
-    if (!application) {
+    if (!admin) {
       return res.status(404).json({
         success: false,
-        error: 'Application not found',
+        message: "Admin not found",
       });
     }
 
-    if (application.status !== 'pending') {
+    if (!["admin", "super_admin"].includes(admin.role)) {
       return res.status(400).json({
         success: false,
-        error: 'Application already processed',
+        message: "User is not an admin",
       });
     }
 
-    // Generate default password (driver's first name or custom logic)
-    const defaultPassword = appConfig.defaults.driverPasswordUseFirstname
-      ? application.name.split(' ')[0]
-      : 'Driver@123';
-
-    // Create driver account
-    const driver = await Driver.create({
-      name: application.name,
-      email: application.email,
-      password: defaultPassword,
-      phone: application.phone,
-      vehicle_model: application.vehicle_model,
-      plate_number: application.plate_number,
-      drivers_license_url: application.drivers_license_url,
-      application_status: 'approved',
-      approved_by: adminId,
-      approval_date: new Date(),
-      first_login: true,
-      status: 'inactive', // Active after password change
-    });
-
-    // Update application
-    application.status = 'approved';
-    application.reviewed_by = adminId;
-    application.reviewed_at = new Date();
-    await application.save();
-
-    // Send approval email with credentials
-    await sendDriverApprovalEmail(driver.email, driver.name, defaultPassword);
-
-    await logAdminAction.approveDriver(adminId, driver._id, { name: driver.name, email: driver.email }, req);
-
-    logger.info(`Driver approved: ${driver.email} by admin ${adminId}`);
-
-    res.status(200).json({
-      success: true,
-      message: 'Driver application approved. Credentials sent via email.',
-      driver: {
-        id: driver._id,
-        name: driver.name,
-        email: driver.email,
-      },
-    });
-  } catch (error) {
-    logger.error(`Approve driver error: ${error.message}`);
-    res.status(500).json({
-      success: false,
-      error: 'Failed to approve application',
-    });
-  }
-};
-
-/**
- * Reject driver application
- */
-exports.rejectDriver = async (req, res) => {
-  try {
-    const { applicationId } = req.params;
-    const { rejection_reason } = req.body;
-    const adminId = req.user._id;
-
-    const application = await Application.findById(applicationId);
-    if (!application) {
-      return res.status(404).json({
-        success: false,
-        error: 'Application not found',
-      });
-    }
-
-    if (application.status !== 'pending') {
+    if (admin._id.toString() === req.user._id.toString()) {
       return res.status(400).json({
         success: false,
-        error: 'Application already processed',
+        message: "You cannot delete yourself",
       });
     }
 
-    application.status = 'rejected';
-    application.reviewed_by = adminId;
-    application.reviewed_at = new Date();
-    application.rejection_reason = rejection_reason || 'Application does not meet requirements';
-    await application.save();
-
-    // Send rejection email
-    await sendDriverRejectionEmail(application.email, application.name, application.rejection_reason);
-
-    await logAdminAction.rejectDriver(adminId, application._id, { email: application.email, reason: rejection_reason }, req);
-
-    logger.info(`Driver application rejected: ${application.email} by admin ${adminId}`);
-
-    res.status(200).json({
-      success: true,
-      message: 'Driver application rejected',
-    });
-  } catch (error) {
-    logger.error(`Reject driver error: ${error.message}`);
-    res.status(500).json({
-      success: false,
-      error: 'Failed to reject application',
-    });
-  }
-};
-
-/**
- * Update fare policy
- */
-exports.updateFarePolicy = async (req, res) => {
-  try {
-    const { mode, base_fee, per_meter_rate, default_fare } = req.body;
-    const adminId = req.user._id;
-
-    // Validate mode
-    if (!['admin', 'driver', 'distance_auto'].includes(mode)) {
-      return res.status(400).json({
-        success: false,
-        error: 'Invalid fare policy mode',
-      });
-    }
-
-    // Update environment variables (in production, store in database)
-    process.env.FARE_POLICY_MODE = mode;
-    if (base_fee) process.env.FARE_BASE_FEE = base_fee.toString();
-    if (per_meter_rate) process.env.FARE_PER_METER_RATE = per_meter_rate.toString();
-    if (default_fare) process.env.DEFAULT_FARE = default_fare.toString();
-
-    // Reload config
-    appConfig.farePolicy.mode = mode;
-    if (base_fee) appConfig.farePolicy.baseFee = parseFloat(base_fee);
-    if (per_meter_rate) appConfig.farePolicy.perMeterRate = parseFloat(per_meter_rate);
-    if (default_fare) appConfig.farePolicy.defaultFare = parseFloat(default_fare);
-
-    await logAdminAction.updateFarePolicy(adminId, { mode, base_fee, per_meter_rate, default_fare }, req);
-
-    logger.info(`Fare policy updated to ${mode} by admin ${adminId}`);
-
-    res.status(200).json({
-      success: true,
-      message: 'Fare policy updated successfully',
-      farePolicy: appConfig.farePolicy,
-    });
-  } catch (error) {
-    logger.error(`Update fare policy error: ${error.message}`);
-    res.status(500).json({
-      success: false,
-      error: 'Failed to update fare policy',
-    });
-  }
-};
-
-/**
- * Get admin overview/dashboard data
- */
-exports.getOverview = async (req, res) => {
-  try {
-    // Check cache first
-    const cached = await getCachedAdminOverview();
-    if (cached) {
+    if (force === "true") {
+      // Hard delete - permanently remove
+      await User.findByIdAndDelete(id);
       return res.status(200).json({
         success: true,
-        cached: true,
-        data: cached,
+        message: "Admin permanently deleted",
+      });
+    } else {
+      // Soft delete - flag the admin
+      admin.is_flagged = true;
+      await admin.save();
+      return res.status(200).json({
+        success: true,
+        message:
+          "Admin flagged successfully. They cannot log in until unflagged.",
+        data: admin,
       });
     }
-
-    // Fetch fresh data
-    const [
-      totalStudents,
-      totalDrivers,
-      activeDrivers,
-      totalRides,
-      activeRides,
-      totalBookings,
-      pendingApplications,
-      flaggedStudents,
-    ] = await Promise.all([
-      Student.countDocuments(),
-      Driver.countDocuments(),
-      Driver.countDocuments({ status: 'active' }),
-      Ride.countDocuments(),
-      Ride.countDocuments({ status: { $in: ['available', 'in_progress'] } }),
-      Booking.countDocuments(),
-      Application.countDocuments({ status: 'pending' }),
-      Student.countDocuments({ is_flagged: true }),
-    ]);
-
-    const overview = {
-      totalStudents,
-      totalDrivers,
-      activeDrivers,
-      totalRides,
-      activeRides,
-      totalBookings,
-      pendingApplications,
-      flaggedStudents,
-      farePolicy: appConfig.farePolicy,
-    };
-
-    // Cache the result
-    await cacheAdminOverview(overview);
-
-    res.status(200).json({
-      success: true,
-      cached: false,
-      data: overview,
-    });
   } catch (error) {
-    logger.error(`Get overview error: ${error.message}`);
-    res.status(500).json({
-      success: false,
-      error: 'Failed to fetch overview',
-    });
+    next(error);
   }
 };
 
 /**
- * Release device binding for student
+ * @swagger
+ * /api/admin/users/delete/{id}:
+ *   delete:
+ *     summary: Delete user (soft delete by default, hard delete with ?force=true)
+ *     tags: [Admin]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: string
+ *       - in: query
+ *         name: force
+ *         schema:
+ *           type: boolean
+ *     responses:
+ *       200:
+ *         description: User deleted successfully
  */
-exports.releaseDeviceBinding = async (req, res) => {
+const deleteUser = async (req, res, next) => {
   try {
-    const { studentId } = req.params;
-    const adminId = req.user._id;
+    const { id } = req.params;
+    const { force } = req.query;
 
-    const student = await Student.findById(studentId);
-    if (!student) {
+    const user = await User.findById(id);
+
+    if (!user) {
       return res.status(404).json({
         success: false,
-        error: 'Student not found',
+        message: "User not found",
       });
     }
 
-    const oldDeviceId = student.device_id;
-    student.device_id = null;
-    await student.save();
+    if (user.role !== "user") {
+      return res.status(400).json({
+        success: false,
+        message:
+          "This endpoint is only for regular users. Use appropriate endpoint for drivers/admins.",
+      });
+    }
 
-    logger.info(`Device binding released for student ${student.matric_no} by admin ${adminId}`);
+    if (force === "true") {
+      // Hard delete - permanently remove
+      await User.findByIdAndDelete(id);
+      return res.status(200).json({
+        success: true,
+        message: "User permanently deleted",
+      });
+    } else {
+      // Soft delete - flag the user
+      user.is_flagged = true;
+      await user.save();
+      return res.status(200).json({
+        success: true,
+        message:
+          "User flagged successfully. They cannot log in until unflagged.",
+        data: user,
+      });
+    }
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * @swagger
+ * /api/admin/drivers/delete/{id}:
+ *   delete:
+ *     summary: Delete driver (soft delete by default, hard delete with ?force=true)
+ *     tags: [Admin]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: string
+ *       - in: query
+ *         name: force
+ *         schema:
+ *           type: boolean
+ *     responses:
+ *       200:
+ *         description: Driver deleted successfully
+ */
+const deleteDriver = async (req, res, next) => {
+  try {
+    const { id } = req.params;
+    const { force } = req.query;
+
+    const driver = await Driver.findById(id).populate("user_id");
+
+    if (!driver) {
+      return res.status(404).json({
+        success: false,
+        message: "Driver not found",
+      });
+    }
+
+    if (force === "true") {
+      // Hard delete - permanently remove driver and update user role
+      await Driver.findByIdAndDelete(id);
+      await User.findByIdAndUpdate(driver.user_id._id, { role: "user" });
+      return res.status(200).json({
+        success: true,
+        message:
+          "Driver permanently deleted and user role reverted to regular user",
+      });
+    } else {
+      // Soft delete - flag the driver's user account
+      await User.findByIdAndUpdate(driver.user_id._id, { is_flagged: true });
+      return res.status(200).json({
+        success: true,
+        message:
+          "Driver flagged successfully. They cannot log in until unflagged.",
+        data: driver,
+      });
+    }
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * @swagger
+ * /api/admin/users/flag/{id}:
+ *   patch:
+ *     summary: Flag or unflag a user
+ *     tags: [Admin]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: string
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - is_flagged
+ *             properties:
+ *               is_flagged:
+ *                 type: boolean
+ *     responses:
+ *       200:
+ *         description: User flag status updated
+ */
+const flagUser = async (req, res, next) => {
+  try {
+    const { id } = req.params;
+    const { is_flagged } = req.body;
+
+    const user = await User.findByIdAndUpdate(
+      id,
+      { is_flagged },
+      { new: true }
+    );
+
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: "User not found",
+      });
+    }
 
     res.status(200).json({
       success: true,
-      message: 'Device binding released successfully',
+      message: `User ${is_flagged ? "flagged" : "unflagged"} successfully`,
+      data: user,
     });
   } catch (error) {
-    logger.error(`Release device binding error: ${error.message}`);
-    res.status(500).json({
-      success: false,
-      error: 'Failed to release device binding',
-    });
+    next(error);
   }
+};
+
+module.exports = {
+  createAdmin,
+  getAllAdmins,
+  updateAdmin,
+  deleteAdmin,
+  getPendingApplications,
+  getAllApplications,
+  approveDriver,
+  rejectDriver,
+  getAllDrivers,
+  deleteDriver,
+  getAllUsers,
+  deleteUser,
+  getFarePolicy,
+  updateFarePolicy,
+  flagUser,
 };

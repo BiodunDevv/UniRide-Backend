@@ -1,98 +1,69 @@
 const jwt = require('jsonwebtoken');
-const appConfig = require('../config/appConfig');
-const logger = require('../config/logger');
-const Admin = require('../models/Admin');
-const Student = require('../models/Student');
-const Driver = require('../models/Driver');
+const User = require('../models/User');
 
-/**
- * Protect routes - verify JWT token
- */
 const protect = async (req, res, next) => {
-  try {
-    let token;
+  let token;
 
-    // Check for token in Authorization header
-    if (req.headers.authorization && req.headers.authorization.startsWith('Bearer')) {
-      token = req.headers.authorization.split(' ')[1];
-    }
-
-    // Check if token exists
-    if (!token) {
-      return res.status(401).json({
-        success: false,
-        error: 'Not authorized. No token provided.',
-      });
-    }
-
+  if (req.headers.authorization && req.headers.authorization.startsWith('Bearer')) {
     try {
-      // Verify token
-      const decoded = jwt.verify(token, appConfig.jwt.secret);
+      // Get token from header
+      token = req.headers.authorization.split(' ')[1];
 
-      // Attach user to request based on user type
-      if (decoded.userType === 'admin') {
-        req.user = await Admin.findById(decoded.id).select('-password');
-        req.userType = 'admin';
-      } else if (decoded.userType === 'student') {
-        req.user = await Student.findById(decoded.id).select('-password');
-        req.userType = 'student';
-      } else if (decoded.userType === 'driver') {
-        req.user = await Driver.findById(decoded.id).select('-password');
-        req.userType = 'driver';
-      }
+      // Verify token
+      const decoded = jwt.verify(token, process.env.JWT_SECRET);
+
+      // Get user from token
+      req.user = await User.findById(decoded.id).select('-password');
 
       if (!req.user) {
         return res.status(401).json({
           success: false,
-          error: 'User not found.',
+          message: 'User not found',
+        });
+      }
+
+      // Check if user is flagged
+      if (req.user.is_flagged) {
+        return res.status(403).json({
+          success: false,
+          message: 'Your account has been flagged. Please contact support.',
         });
       }
 
       next();
     } catch (error) {
-      logger.error(`JWT verification error: ${error.message}`);
-      
-      if (error.name === 'TokenExpiredError') {
-        return res.status(401).json({
-          success: false,
-          error: 'Token expired. Please login again.',
-        });
-      }
-      
+      console.error('Auth middleware error:', error.message);
       return res.status(401).json({
         success: false,
-        error: 'Invalid token. Not authorized.',
+        message: 'Not authorized, token failed',
       });
     }
-  } catch (error) {
-    logger.error(`Auth middleware error: ${error.message}`);
-    return res.status(500).json({
+  }
+
+  if (!token) {
+    return res.status(401).json({
       success: false,
-      error: 'Server error in authentication.',
+      message: 'Not authorized, no token',
     });
   }
 };
 
-/**
- * Generate JWT token
- */
-const generateToken = (id, userType) => {
-  return jwt.sign({ id, userType }, appConfig.jwt.secret, {
-    expiresIn: appConfig.jwt.expire,
-  });
+// Optional auth - doesn't fail if no token
+const optionalAuth = async (req, res, next) => {
+  let token;
+
+  if (req.headers.authorization && req.headers.authorization.startsWith('Bearer')) {
+    try {
+      token = req.headers.authorization.split(' ')[1];
+      const decoded = jwt.verify(token, process.env.JWT_SECRET);
+      req.user = await User.findById(decoded.id).select('-password');
+    } catch (error) {
+      // Continue without user
+      req.user = null;
+    }
+  }
+
+  next();
 };
 
-/**
- * Generate refresh token
- */
-const generateRefreshToken = (id, userType) => {
-  return jwt.sign({ id, userType }, appConfig.jwt.refreshSecret, {
-    expiresIn: appConfig.jwt.refreshExpire,
-  });
-};
-
-module.exports = {
-  protect,
-  generateToken,
-  generateRefreshToken,
-};
+module.exports = { protect, optionalAuth };

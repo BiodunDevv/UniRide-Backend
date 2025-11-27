@@ -1,83 +1,53 @@
-const logger = require('../config/logger');
-
-/**
- * Global error handler middleware
- */
 const errorHandler = (err, req, res, next) => {
-  let error = { ...err };
-  error.message = err.message;
-
-  // Log error for debugging
-  logger.error(`Error: ${err.message}`, {
-    stack: err.stack,
-    url: req.originalUrl,
-    method: req.method,
-    ip: req.ip,
-  });
-
-  // Mongoose bad ObjectId
-  if (err.name === 'CastError') {
-    const message = 'Resource not found';
-    error = {
-      message,
-      statusCode: 404,
-    };
-  }
-
-  // Mongoose duplicate key
-  if (err.code === 11000) {
-    const field = Object.keys(err.keyValue)[0];
-    const message = `Duplicate field value: ${field}. Please use another value.`;
-    error = {
-      message,
-      statusCode: 400,
-    };
-  }
+  console.error("Error:", err.stack);
 
   // Mongoose validation error
-  if (err.name === 'ValidationError') {
-    const message = Object.values(err.errors)
-      .map((val) => val.message)
-      .join(', ');
-    error = {
-      message,
-      statusCode: 400,
-    };
+  if (err.name === "ValidationError") {
+    const errors = Object.values(err.errors).map((e) => e.message);
+    return res.status(400).json({
+      success: false,
+      message: "Validation Error",
+      errors,
+    });
+  }
+
+  // Mongoose duplicate key error
+  if (err.code === 11000) {
+    const field = Object.keys(err.keyPattern)[0];
+    return res.status(400).json({
+      success: false,
+      message: `${field} already exists`,
+    });
+  }
+
+  // Mongoose cast error (invalid ObjectId)
+  if (err.name === "CastError") {
+    return res.status(400).json({
+      success: false,
+      message: "Invalid ID format",
+    });
   }
 
   // JWT errors
-  if (err.name === 'JsonWebTokenError') {
-    error = {
-      message: 'Invalid token',
-      statusCode: 401,
-    };
+  if (err.name === "JsonWebTokenError") {
+    return res.status(401).json({
+      success: false,
+      message: "Invalid token",
+    });
   }
 
-  if (err.name === 'TokenExpiredError') {
-    error = {
-      message: 'Token expired',
-      statusCode: 401,
-    };
+  if (err.name === "TokenExpiredError") {
+    return res.status(401).json({
+      success: false,
+      message: "Token expired",
+    });
   }
 
-  // Send response
-  res.status(error.statusCode || 500).json({
+  // Default error
+  res.status(err.statusCode || 500).json({
     success: false,
-    error: error.message || 'Server Error',
-    ...(process.env.NODE_ENV === 'development' && { stack: err.stack }),
+    message: err.message || "Server Error",
   });
 };
 
-/**
- * Handle 404 - Not Found
- */
-const notFound = (req, res, next) => {
-  const error = new Error(`Not Found - ${req.originalUrl}`);
-  res.status(404);
-  next(error);
-};
-
-module.exports = {
-  errorHandler,
-  notFound,
-};
+module.exports = errorHandler;

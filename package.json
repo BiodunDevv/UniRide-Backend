@@ -1,68 +1,48 @@
 {
   "name": "uniride-backend",
-  "version": "2.3.0",
-  "description": "UniRide - Secure campus ride-hailing platform backend with biometric auth, real-time tracking, and OpenStreetMap integration",
+  "version": "1.0.0",
+  "description": "UniRide - Secure Campus Ride-Hailing Platform Backend",
   "main": "src/server.js",
   "scripts": {
     "start": "node src/server.js",
     "dev": "nodemon src/server.js",
-    "seed": "node scripts/seed.js",
-    "migrate": "node scripts/migrations.js",
-    "test": "jest --coverage",
-    "lint": "eslint src/",
-    "format": "prettier --write \"src/**/*.js\""
+    "seed": "node src/scripts/seed.js",
+    "test": "echo \"Error: no test specified\" && exit 1"
   },
   "keywords": [
     "ride-hailing",
     "campus",
-    "socket.io",
+    "nodejs",
     "express",
     "mongodb",
     "redis",
-    "openstreetmap"
+    "socketio"
   ],
   "author": "UniRide Team",
   "license": "MIT",
   "dependencies": {
-    "@socket.io/redis-adapter": "^8.3.0",
-    "axios": "^1.6.5",
-    "bcrypt": "^5.1.1",
-    "compression": "^1.7.4",
-    "cors": "^2.8.5",
-    "csv-parser": "^3.0.0",
-    "dotenv": "^16.3.1",
     "express": "^4.18.2",
-    "express-mongo-sanitize": "^2.2.0",
-    "express-rate-limit": "^7.1.5",
-    "helmet": "^7.1.0",
-    "hpp": "^0.2.3",
-    "joi": "^17.11.0",
+    "mongoose": "^8.0.0",
+    "bcrypt": "^5.1.1",
     "jsonwebtoken": "^9.0.2",
-    "moment": "^2.30.1",
-    "mongoose": "^8.0.3",
-    "multer": "^1.4.5-lts.1",
-    "rate-limit-redis": "^4.3.0",
-    "redis": "^4.6.5",
+    "dotenv": "^16.3.1",
+    "cors": "^2.8.5",
+    "helmet": "^7.1.0",
+    "express-rate-limit": "^7.1.5",
+    "redis": "^4.6.11",
     "socket.io": "^4.6.1",
-    "socket.io-redis": "^6.1.1",
+    "axios": "^1.6.2",
+    "@getbrevo/brevo": "^2.0.0",
     "swagger-jsdoc": "^6.2.8",
     "swagger-ui-express": "^5.0.0",
-    "winston": "^3.11.0",
-    "winston-daily-rotate-file": "^4.7.1",
-    "xlsx": "^0.18.5",
-    "xss-clean": "^0.1.4"
+    "express-validator": "^7.0.1",
+    "morgan": "^1.10.0",
+    "uuid": "^9.0.1"
   },
   "devDependencies": {
-    "eslint": "^8.56.0",
-    "eslint-config-airbnb-base": "^15.0.0",
-    "eslint-plugin-import": "^2.29.1",
-    "jest": "^29.7.0",
-    "nodemon": "^3.0.2",
-    "prettier": "^3.1.1",
-    "supertest": "^6.3.3"
+    "nodemon": "^3.0.2"
   },
   "engines": {
-    "node": ">=18.0.0",
-    "npm": ">=9.0.0"
+    "node": ">=18.0.0"
   }
 }

@@ -1,292 +1,289 @@
-const Driver = require('../models/Driver');
-const Application = require('../models/Application');
-const Ride = require('../models/Ride');
-const { sendDriverApplicationReceivedEmail } = require('../services/emailService');
-const { logDriverAction } = require('../services/auditService');
-const { validateBankAccountNumber } = require('../utils/validators');
-const logger = require('../config/logger');
+const Driver = require("../models/Driver");
+const DriverApplication = require("../models/DriverApplication");
+const User = require("../models/User");
+const {
+  sendDriverApplicationReceivedEmail,
+} = require("../services/emailService");
 
 /**
- * Submit driver application
+ * @swagger
+ * /api/driver/apply:
+ *   post:
+ *     summary: Submit driver application
+ *     tags: [Driver]
+ *     security:
+ *       - bearerAuth: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - vehicle_model
+ *               - plate_number
+ *               - drivers_license
+ *               - phone
+ *             properties:
+ *               vehicle_model:
+ *                 type: string
+ *               plate_number:
+ *                 type: string
+ *               drivers_license:
+ *                 type: string
+ *               phone:
+ *                 type: string
+ *               available_seats:
+ *                 type: number
+ *     responses:
+ *       201:
+ *         description: Application submitted successfully
  */
-exports.submitApplication = async (req, res) => {
+const applyAsDriver = async (req, res, next) => {
   try {
-    const { name, email, phone, vehicle_model, plate_number, drivers_license_url } = req.body;
+    const {
+      vehicle_model,
+      plate_number,
+      drivers_license,
+      phone,
+      available_seats,
+    } = req.body;
 
-    // Check if email already exists
-    const existingApplication = await Application.findOne({ email: email.toLowerCase() });
+    // Check if user already has a pending or approved application
+    const existingApplication = await DriverApplication.findOne({
+      user_id: req.user._id,
+      status: { $in: ["pending", "approved"] },
+    });
+
     if (existingApplication) {
       return res.status(400).json({
         success: false,
-        error: 'Application already submitted with this email',
+        message: `You already have a ${existingApplication.status} application`,
       });
     }
 
-    const existingDriver = await Driver.findOne({ email: email.toLowerCase() });
+    // Check if user is already a driver
+    const existingDriver = await Driver.findOne({ user_id: req.user._id });
     if (existingDriver) {
       return res.status(400).json({
         success: false,
-        error: 'Driver account already exists with this email',
+        message: "You are already registered as a driver",
       });
     }
 
     // Create application
-    const application = await Application.create({
-      name,
-      email: email.toLowerCase(),
-      phone,
+    const application = await DriverApplication.create({
+      user_id: req.user._id,
       vehicle_model,
-      plate_number: plate_number?.toUpperCase(),
-      drivers_license_url,
-      status: 'pending',
-      submitted_at: new Date(),
+      plate_number: plate_number.toUpperCase(),
+      drivers_license,
+      phone,
+      available_seats: available_seats || 4,
     });
 
-    // Send confirmation email
-    await sendDriverApplicationReceivedEmail(email, name);
-
-    await logDriverAction.submitApplication(email, application._id, { name, email }, req);
-
-    logger.info(`Driver application submitted: ${email}`);
+    // Send application received email
+    try {
+      await sendDriverApplicationReceivedEmail({
+        name: req.user.name,
+        email: req.user.email,
+        applicationId: application._id,
+      });
+    } catch (emailError) {
+      console.error("Error sending application email:", emailError.message);
+      // Continue even if email fails
+    }
 
     res.status(201).json({
       success: true,
-      message: 'Application submitted successfully. You will be notified via email once reviewed.',
-      application: {
-        id: application._id,
-        status: application.status,
-        submitted_at: application.submitted_at,
-      },
+      message:
+        "Driver application submitted successfully. You will be notified via email once reviewed.",
+      data: application,
     });
   } catch (error) {
-    logger.error(`Submit application error: ${error.message}`);
-    res.status(500).json({
-      success: false,
-      error: 'Failed to submit application',
-    });
+    next(error);
   }
 };
 
 /**
- * Get driver application/account status
+ * @swagger
+ * /api/driver/status:
+ *   get:
+ *     summary: Check application status
+ *     tags: [Driver]
+ *     security:
+ *       - bearerAuth: []
+ *     responses:
+ *       200:
+ *         description: Application status retrieved
  */
-exports.getStatus = async (req, res) => {
+const getApplicationStatus = async (req, res, next) => {
   try {
-    const { email } = req.query;
+    const application = await DriverApplication.findOne({
+      user_id: req.user._id,
+    })
+      .sort({ submitted_at: -1 })
+      .populate("reviewed_by", "name email");
 
-    if (!email) {
-      return res.status(400).json({
+    if (!application) {
+      return res.status(404).json({
         success: false,
-        error: 'Email is required',
+        message: "No application found",
       });
     }
 
-    // Check application
-    const application = await Application.findOne({ email: email.toLowerCase() }).lean();
-
-    if (application) {
-      return res.status(200).json({
-        success: true,
-        type: 'application',
-        status: application.status,
-        submitted_at: application.submitted_at,
-        reviewed_at: application.reviewed_at,
-        rejection_reason: application.rejection_reason,
-      });
-    }
-
-    // Check driver account
-    const driver = await Driver.findOne({ email: email.toLowerCase() }).select('-password').lean();
-
-    if (driver) {
-      return res.status(200).json({
-        success: true,
-        type: 'driver',
-        status: driver.status,
-        first_login: driver.first_login,
-        approved_date: driver.approval_date,
-      });
-    }
-
-    res.status(404).json({
-      success: false,
-      error: 'No application or account found with this email',
+    res.status(200).json({
+      success: true,
+      data: application,
     });
   } catch (error) {
-    logger.error(`Get status error: ${error.message}`);
-    res.status(500).json({
-      success: false,
-      error: 'Failed to fetch status',
-    });
+    next(error);
   }
 };
 
 /**
- * Update driver profile
+ * @swagger
+ * /api/driver/profile:
+ *   get:
+ *     summary: Get driver profile
+ *     tags: [Driver]
+ *     security:
+ *       - bearerAuth: []
+ *     responses:
+ *       200:
+ *         description: Driver profile retrieved
  */
-exports.updateProfile = async (req, res) => {
+const getDriverProfile = async (req, res, next) => {
   try {
-    const driverId = req.user._id;
-    const { phone, vehicle_model, plate_number, available_seats } = req.body;
+    const driver = await Driver.findOne({ user_id: req.user._id }).populate(
+      "user_id",
+      "name email"
+    );
 
-    const driver = await Driver.findById(driverId);
     if (!driver) {
       return res.status(404).json({
         success: false,
-        error: 'Driver not found',
+        message: "Driver profile not found",
       });
     }
 
-    // Update fields
+    res.status(200).json({
+      success: true,
+      data: driver,
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * @swagger
+ * /api/driver/profile:
+ *   patch:
+ *     summary: Update driver profile or add bank info
+ *     tags: [Driver]
+ *     security:
+ *       - bearerAuth: []
+ *     requestBody:
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             properties:
+ *               phone:
+ *                 type: string
+ *               bank_name:
+ *                 type: string
+ *               bank_account_number:
+ *                 type: string
+ *               bank_account_name:
+ *                 type: string
+ *               available_seats:
+ *                 type: number
+ *     responses:
+ *       200:
+ *         description: Profile updated successfully
+ */
+const updateDriverProfile = async (req, res, next) => {
+  try {
+    const {
+      phone,
+      bank_name,
+      bank_account_number,
+      bank_account_name,
+      available_seats,
+    } = req.body;
+
+    const driver = await Driver.findOne({ user_id: req.user._id });
+
+    if (!driver) {
+      return res.status(404).json({
+        success: false,
+        message: "Driver profile not found",
+      });
+    }
+
+    // Update fields if provided
     if (phone) driver.phone = phone;
-    if (vehicle_model) driver.vehicle_model = vehicle_model;
-    if (plate_number) driver.plate_number = plate_number.toUpperCase();
+    if (bank_name) driver.bank_name = bank_name;
+    if (bank_account_number) driver.bank_account_number = bank_account_number;
+    if (bank_account_name) driver.bank_account_name = bank_account_name;
     if (available_seats) driver.available_seats = available_seats;
 
     await driver.save();
 
-    logger.info(`Driver profile updated: ${driverId}`);
-
     res.status(200).json({
       success: true,
-      message: 'Profile updated successfully',
-      driver: {
-        phone: driver.phone,
-        vehicle_model: driver.vehicle_model,
-        plate_number: driver.plate_number,
-        available_seats: driver.available_seats,
-      },
+      message: "Profile updated successfully",
+      data: driver,
     });
   } catch (error) {
-    logger.error(`Update driver profile error: ${error.message}`);
-    res.status(500).json({
-      success: false,
-      error: 'Failed to update profile',
-    });
+    next(error);
   }
 };
 
 /**
- * Add/update bank details
+ * @swagger
+ * /api/driver/toggle-status:
+ *   patch:
+ *     summary: Toggle driver availability (active/inactive)
+ *     tags: [Driver]
+ *     security:
+ *       - bearerAuth: []
+ *     responses:
+ *       200:
+ *         description: Status toggled successfully
  */
-exports.updateBankDetails = async (req, res) => {
+const toggleDriverStatus = async (req, res, next) => {
   try {
-    const driverId = req.user._id;
-    const { bank_name, bank_account_number, bank_account_name } = req.body;
+    const driver = await Driver.findOne({ user_id: req.user._id });
 
-    if (!bank_name || !bank_account_number) {
-      return res.status(400).json({
-        success: false,
-        error: 'Bank name and account number are required',
-      });
-    }
-
-    // Validate account number
-    if (!validateBankAccountNumber(bank_account_number)) {
-      return res.status(400).json({
-        success: false,
-        error: 'Invalid bank account number format',
-      });
-    }
-
-    const driver = await Driver.findById(driverId);
     if (!driver) {
       return res.status(404).json({
         success: false,
-        error: 'Driver not found',
+        message: "Driver profile not found",
       });
     }
 
-    driver.bank_name = bank_name;
-    driver.bank_account_number = bank_account_number;
-    if (bank_account_name) {
-      driver.bank_account_name = bank_account_name;
-    }
-
-    await driver.save();
-
-    await logDriverAction.updateBankDetails(driverId, { bank_name }, req);
-
-    logger.info(`Bank details updated for driver: ${driverId}`);
-
-    res.status(200).json({
-      success: true,
-      message: 'Bank details updated successfully',
-      bank_details: {
-        bank_name: driver.bank_name,
-        bank_account_number: driver.bank_account_number,
-        bank_account_name: driver.bank_account_name,
-      },
-    });
-  } catch (error) {
-    logger.error(`Update bank details error: ${error.message}`);
-    res.status(500).json({
-      success: false,
-      error: 'Failed to update bank details',
-    });
-  }
-};
-
-/**
- * Get driver profile
- */
-exports.getProfile = async (req, res) => {
-  try {
-    const driver = await Driver.findById(req.user._id).select('-password').lean();
-
-    // Get ride statistics
-    const totalRides = await Ride.countDocuments({ driver_id: driver._id, status: 'completed' });
-    const activeRides = await Ride.countDocuments({ driver_id: driver._id, status: { $in: ['available', 'in_progress'] } });
-
-    res.status(200).json({
-      success: true,
-      driver: {
-        ...driver,
-        statistics: {
-          total_rides: totalRides,
-          active_rides: activeRides,
-        },
-      },
-    });
-  } catch (error) {
-    logger.error(`Get driver profile error: ${error.message}`);
-    res.status(500).json({
-      success: false,
-      error: 'Failed to fetch profile',
-    });
-  }
-};
-
-/**
- * Update driver location
- */
-exports.updateLocation = async (req, res) => {
-  try {
-    const driverId = req.user._id;
-    const { longitude, latitude } = req.body;
-
-    const driver = await Driver.findById(driverId);
-    if (!driver) {
-      return res.status(404).json({
-        success: false,
-        error: 'Driver not found',
-      });
-    }
-
-    driver.updateLocation(longitude, latitude);
+    // Toggle status
+    driver.status = driver.status === "active" ? "inactive" : "active";
     await driver.save();
 
     res.status(200).json({
       success: true,
-      message: 'Location updated successfully',
+      message: `Driver status set to ${driver.status}`,
+      data: {
+        status: driver.status,
+      },
     });
   } catch (error) {
-    logger.error(`Update driver location error: ${error.message}`);
-    res.status(500).json({
-      success: false,
-      error: 'Failed to update location',
-    });
+    next(error);
   }
 };
 
-module.exports = exports;
+module.exports = {
+  applyAsDriver,
+  getApplicationStatus,
+  getDriverProfile,
+  updateDriverProfile,
+  toggleDriverStatus,
+};

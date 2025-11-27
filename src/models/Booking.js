@@ -1,4 +1,4 @@
-const mongoose = require('mongoose');
+const mongoose = require("mongoose");
 
 /**
  * @swagger
@@ -8,17 +8,13 @@ const mongoose = require('mongoose');
  *       type: object
  *       required:
  *         - ride_id
- *         - student_id
- *         - no_of_seats
+ *         - user_id
+ *         - payment_method
  *       properties:
  *         ride_id:
  *           type: string
- *         student_id:
+ *         user_id:
  *           type: string
- *         no_of_seats:
- *           type: number
- *           minimum: 1
- *           maximum: 4
  *         payment_method:
  *           type: string
  *           enum: [cash, transfer]
@@ -27,51 +23,46 @@ const mongoose = require('mongoose');
  *           enum: [pending, paid, not_applicable]
  *         bank_details_visible:
  *           type: boolean
+ *         booking_time:
+ *           type: string
+ *           format: date-time
  *         check_in_status:
  *           type: string
  *           enum: [not_checked_in, checked_in]
  *         status:
  *           type: string
- *           enum: [active, accepted, in_progress, completed, missed, cancelled]
+ *           enum: [active, accepted, in_progress, completed, cancelled]
  *         rating:
  *           type: number
- *           minimum: 1
- *           maximum: 5
  */
 
 const bookingSchema = new mongoose.Schema(
   {
     ride_id: {
       type: mongoose.Schema.Types.ObjectId,
-      ref: 'Ride',
-      required: [true, 'Ride ID is required'],
-      index: true,
+      ref: "Ride",
+      required: true,
     },
-    student_id: {
+    user_id: {
       type: mongoose.Schema.Types.ObjectId,
-      ref: 'Student',
-      required: [true, 'Student ID is required'],
-      index: true,
-    },
-    no_of_seats: {
-      type: Number,
-      required: [true, 'Number of seats is required'],
-      min: [1, 'Number of seats must be at least 1'],
-      max: [4, 'Number of seats cannot exceed 4'],
+      ref: "User",
+      required: true,
     },
     payment_method: {
       type: String,
-      enum: ['cash', 'transfer'],
-      required: [true, 'Payment method is required'],
+      enum: ["cash", "transfer"],
+      required: true,
     },
     payment_status: {
       type: String,
-      enum: ['pending', 'paid', 'not_applicable'],
-      default: 'pending',
+      enum: ["pending", "paid", "not_applicable"],
+      default: function () {
+        return this.payment_method === "cash" ? "not_applicable" : "pending";
+      },
     },
     bank_details_visible: {
       type: Boolean,
-      default: false, // Only true after booking is accepted
+      default: false, // Only visible after booking confirmation
     },
     booking_time: {
       type: Date,
@@ -79,61 +70,33 @@ const bookingSchema = new mongoose.Schema(
     },
     check_in_status: {
       type: String,
-      enum: ['not_checked_in', 'checked_in'],
-      default: 'not_checked_in',
-    },
-    check_in_time: {
-      type: Date,
+      enum: ["not_checked_in", "checked_in"],
+      default: "not_checked_in",
     },
     status: {
       type: String,
-      enum: ['active', 'accepted', 'in_progress', 'completed', 'missed', 'cancelled'],
-      default: 'active',
+      enum: ["active", "accepted", "in_progress", "completed", "cancelled"],
+      default: "active",
     },
     rating: {
       type: Number,
-      min: [1, 'Rating must be at least 1'],
-      max: [5, 'Rating cannot exceed 5'],
+      min: 1,
+      max: 5,
     },
-    review: {
+    feedback: {
       type: String,
-      trim: true,
-      maxlength: [500, 'Review cannot exceed 500 characters'],
+      maxlength: 500,
     },
   },
   {
-    timestamps: { createdAt: 'created_at', updatedAt: 'updated_at' },
+    timestamps: true,
   }
 );
 
-// Indexes
-bookingSchema.index({ ride_id: 1, student_id: 1 });
-bookingSchema.index({ student_id: 1, status: 1 });
-bookingSchema.index({ status: 1 });
-bookingSchema.index({ booking_time: -1 });
+// Compound index for user's bookings
+bookingSchema.index({ user_id: 1, status: 1 });
+bookingSchema.index({ ride_id: 1, status: 1 });
 
-// Compound index to prevent duplicate active bookings
-bookingSchema.index(
-  { ride_id: 1, student_id: 1, status: 1 },
-  {
-    unique: true,
-    partialFilterExpression: { status: { $in: ['active', 'accepted', 'in_progress'] } },
-  }
-);
+const Booking = mongoose.model("Booking", bookingSchema);
 
-// Method to check in
-bookingSchema.methods.checkIn = function () {
-  this.check_in_status = 'checked_in';
-  this.check_in_time = new Date();
-};
-
-// Method to mark as missed
-bookingSchema.methods.markAsMissed = function () {
-  this.status = 'missed';
-};
-
-// Ensure virtuals are included in JSON
-bookingSchema.set('toJSON', { virtuals: true });
-bookingSchema.set('toObject', { virtuals: true });
-
-module.exports = mongoose.model('Booking', bookingSchema);
+module.exports = Booking;

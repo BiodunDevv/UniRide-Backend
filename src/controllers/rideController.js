@@ -1,447 +1,455 @@
-const Ride = require('../models/Ride');
-const Driver = require('../models/Driver');
-const Booking = require('../models/Booking');
-const { getDirections } = require('../services/orsService');
-const { calculateFare } = require('../utils/fareCalculator');
-const { generateSecureCheckInCode, getCheckInCodeExpiry } = require('../utils/generateCheckInCode');
-const { getCachedNearbyRides, cacheNearbyRides, invalidateRideCaches } = require('../services/cacheService');
-const { streamDriverLocation, notifyRideStarted, notifyRideCompleted } = require('../services/notificationService');
-const { logDriverAction } = require('../services/auditService');
-const { getPaginationParams, createPaginationResponse } = require('../utils/pagination');
-const { buildNearQuery } = require('../utils/geoHelpers');
-const appConfig = require('../config/appConfig');
-const logger = require('../config/logger');
+const Ride = require("../models/Ride");
+const Driver = require("../models/Driver");
+const Booking = require("../models/Booking");
+const generateCheckInCode = require("../utils/generateCheckInCode");
+const { calculateRoute } = require("../services/routeService");
+const { calculateFare } = require("../utils/fareCalculator");
+const notificationService = require("../services/notificationService");
 
 /**
- * Create a new ride
+ * @swagger
+ * /api/rides:
+ *   post:
+ *     summary: Create new ride (Driver only)
+ *     tags: [Rides]
+ *     security:
+ *       - bearerAuth: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - pickup_location
+ *               - destination
+ *               - departure_time
+ *               - available_seats
+ *             properties:
+ *               pickup_location:
+ *                 type: object
+ *               destination:
+ *                 type: object
+ *               fare:
+ *                 type: number
+ *               departure_time:
+ *                 type: string
+ *               available_seats:
+ *                 type: number
+ *     responses:
+ *       201:
+ *         description: Ride created successfully
  */
-exports.createRide = async (req, res) => {
+const createRide = async (req, res, next) => {
   try {
-    const driverId = req.user._id;
-    const { pickup_location, destination, fare, departure_time, available_seats } = req.body;
+    const {
+      pickup_location,
+      destination,
+      fare,
+      departure_time,
+      available_seats,
+    } = req.body;
 
-    // Verify driver is active
-    const driver = await Driver.findById(driverId);
-    if (!driver || driver.status !== 'active') {
-      return res.status(403).json({
+    // Get driver profile
+    const driver = await Driver.findOne({ user_id: req.user._id });
+
+    if (!driver) {
+      return res.status(404).json({
         success: false,
-        error: 'Driver account is not active',
+        message: "Driver profile not found",
       });
     }
 
-    // Get route details from ORS
-    let routeData, calculatedFare;
-    try {
-      routeData = await getDirections(pickup_location.coordinates, destination.coordinates);
-    } catch (error) {
-      logger.warn(`ORS error for ride creation: ${error.message}`);
-      // Continue without route data
+    if (driver.status !== "active") {
+      return res.status(403).json({
+        success: false,
+        message: "Driver must be active to create rides",
+      });
     }
 
-    // Calculate fare based on policy
-    const fareCalculation = calculateFare({
-      distanceMeters: routeData?.distance_meters,
-      driverFare: fare,
-    });
+    // Calculate route
+    const routeData = await calculateRoute(pickup_location, destination);
+
+    // Calculate fare if not provided
+    let finalFare = fare;
+    let fareSource = "driver";
+
+    if (!fare) {
+      finalFare = await calculateFare(
+        routeData.distance_meters,
+        routeData.duration_seconds
+      );
+      fareSource = "distance_auto";
+    }
+
+    // Generate check-in code
+    const checkInCode = generateCheckInCode();
 
     // Create ride
     const ride = await Ride.create({
-      driver_id: driverId,
+      driver_id: driver._id,
       pickup_location: {
-        type: 'Point',
-        coordinates: pickup_location.coordinates,
-        address: pickup_location.address,
+        type: "Point",
+        coordinates: routeData.pickup.coordinates,
+        address: routeData.pickup.address,
       },
       destination: {
-        type: 'Point',
-        coordinates: destination.coordinates,
-        address: destination.address,
+        type: "Point",
+        coordinates: routeData.destination.coordinates,
+        address: routeData.destination.address,
       },
-      fare: fareCalculation.fare,
-      fare_policy_source: fareCalculation.source,
+      fare: finalFare,
+      fare_policy_source: fareSource,
       departure_time,
       available_seats: available_seats || driver.available_seats,
-      booked_seats: 0,
-      status: 'available',
-      route_geometry: routeData?.geometry,
-      distance_meters: routeData?.distance_meters,
-      duration_seconds: routeData?.duration_seconds,
+      route_geometry: routeData.route_geometry,
+      distance_meters: routeData.distance_meters,
+      duration_seconds: routeData.duration_seconds,
+      check_in_code: checkInCode,
+      status: "available",
     });
 
-    await logDriverAction.createRide(driverId, ride._id, {
-      pickup: pickup_location.address,
-      destination: destination.address,
-      fare: ride.fare,
-    }, req);
-
-    // Invalidate ride caches
-    await invalidateRideCaches();
-
-    logger.info(`Ride created: ${ride._id} by driver ${driverId}`);
+    // Notify available drivers (in this case, notify users looking for rides)
+    notificationService.notifyAvailableDrivers(ride);
 
     res.status(201).json({
       success: true,
-      message: 'Ride created successfully',
-      ride,
+      message: "Ride created successfully",
+      data: ride,
     });
   } catch (error) {
-    logger.error(`Create ride error: ${error.message}`);
-    res.status(500).json({
-      success: false,
-      error: 'Failed to create ride',
-    });
+    next(error);
   }
 };
 
 /**
- * Get nearby available rides
+ * @swagger
+ * /api/rides/active:
+ *   get:
+ *     summary: Get all active rides
+ *     tags: [Rides]
+ *     security:
+ *       - bearerAuth: []
+ *     responses:
+ *       200:
+ *         description: Active rides retrieved
  */
-exports.getNearbyRides = async (req, res) => {
+const getActiveRides = async (req, res, next) => {
   try {
-    const { longitude, latitude, max_distance } = req.query;
-
-    if (!longitude || !latitude) {
-      return res.status(400).json({
-        success: false,
-        error: 'Longitude and latitude are required',
-      });
-    }
-
-    const location = {
-      longitude: parseFloat(longitude),
-      latitude: parseFloat(latitude),
-    };
-
-    // Check cache
-    const cached = await getCachedNearbyRides(location);
-    if (cached) {
-      return res.status(200).json({
-        success: true,
-        cached: true,
-        rides: cached,
-      });
-    }
-
-    const maxDistance = max_distance ? parseFloat(max_distance) * 1000 : appConfig.ride.searchRadiusKm * 1000;
-
-    // Query nearby rides
     const rides = await Ride.find({
-      status: 'available',
+      status: "available",
       departure_time: { $gte: new Date() },
-      pickup_location: buildNearQuery(location.longitude, location.latitude, maxDistance),
+      available_seats: { $gt: 0 },
     })
-      .populate('driver_id', 'name phone rating vehicle_model plate_number')
-      .limit(20)
-      .lean();
-
-    // Cache the result
-    await cacheNearbyRides(location, rides);
+      .populate({
+        path: "driver_id",
+        populate: {
+          path: "user_id",
+          select: "name email",
+        },
+      })
+      .sort({ departure_time: 1 });
 
     res.status(200).json({
       success: true,
-      cached: false,
       count: rides.length,
-      rides,
+      data: rides,
     });
   } catch (error) {
-    logger.error(`Get nearby rides error: ${error.message}`);
-    res.status(500).json({
-      success: false,
-      error: 'Failed to fetch nearby rides',
-    });
+    next(error);
   }
 };
 
 /**
- * Get active rides for current user
+ * @swagger
+ * /api/rides/{id}:
+ *   get:
+ *     summary: Get ride details
+ *     tags: [Rides]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: string
+ *     responses:
+ *       200:
+ *         description: Ride details retrieved
  */
-exports.getActiveRides = async (req, res) => {
+const getRideDetails = async (req, res, next) => {
   try {
-    const userId = req.user._id;
-    const userType = req.userType;
+    const ride = await Ride.findById(req.params.id).populate({
+      path: "driver_id",
+      populate: {
+        path: "user_id",
+        select: "name email",
+      },
+    });
 
-    let rides;
-    if (userType === 'driver') {
-      rides = await Ride.find({
-        driver_id: userId,
-        status: { $in: ['available', 'in_progress'] },
-      })
-        .populate({
-          path: 'bookings',
-          populate: { path: 'student_id', select: 'matric_no first_name last_name phone' },
-        })
-        .sort({ departure_time: 1 })
-        .lean();
-    } else if (userType === 'student') {
-      const bookings = await Booking.find({
-        student_id: userId,
-        status: { $in: ['active', 'accepted', 'in_progress'] },
-      })
-        .populate({
-          path: 'ride_id',
-          populate: { path: 'driver_id', select: 'name phone rating vehicle_model plate_number' },
-        })
-        .lean();
-
-      rides = bookings.map((b) => b.ride_id);
+    if (!ride) {
+      return res.status(404).json({
+        success: false,
+        message: "Ride not found",
+      });
     }
 
     res.status(200).json({
       success: true,
-      count: rides?.length || 0,
-      rides,
+      data: ride,
     });
   } catch (error) {
-    logger.error(`Get active rides error: ${error.message}`);
-    res.status(500).json({
-      success: false,
-      error: 'Failed to fetch active rides',
-    });
+    next(error);
   }
 };
 
 /**
- * Generate/rotate check-in code
+ * @swagger
+ * /api/rides/{id}/location:
+ *   post:
+ *     summary: Update driver GPS location during ride
+ *     tags: [Rides]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: string
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - latitude
+ *               - longitude
+ *             properties:
+ *               latitude:
+ *                 type: number
+ *               longitude:
+ *                 type: number
+ *     responses:
+ *       200:
+ *         description: Location updated
  */
-exports.generateCheckInCode = async (req, res) => {
+const updateDriverLocation = async (req, res, next) => {
   try {
-    const { id } = req.params;
-    const driverId = req.user._id;
+    const { latitude, longitude } = req.body;
 
-    const ride = await Ride.findOne({ _id: id, driver_id: driverId });
+    const ride = await Ride.findById(req.params.id);
+
     if (!ride) {
       return res.status(404).json({
         success: false,
-        error: 'Ride not found',
+        message: "Ride not found",
       });
     }
 
-    // Generate new code
-    const code = generateSecureCheckInCode();
-    const expiry = getCheckInCodeExpiry(appConfig.ride.checkInCodeExpirySeconds);
+    // Verify driver owns this ride
+    const driver = await Driver.findOne({ user_id: req.user._id });
+    if (!driver || ride.driver_id.toString() !== driver._id.toString()) {
+      return res.status(403).json({
+        success: false,
+        message: "Not authorized to update this ride",
+      });
+    }
 
-    ride.check_in_code = code;
-    ride.check_in_code_expiry = expiry;
+    // Update current location
+    ride.current_location = {
+      type: "Point",
+      coordinates: [longitude, latitude],
+    };
     await ride.save();
 
-    logger.info(`Check-in code generated for ride ${id}`);
+    // Get all bookings for this ride to notify users
+    const bookings = await Booking.find({
+      ride_id: ride._id,
+      status: { $in: ["accepted", "in_progress"] },
+    });
+
+    // Broadcast location to all booked users
+    const { calculateETA } = require("../services/routeService");
+
+    for (const booking of bookings) {
+      try {
+        const eta = await calculateETA(
+          [longitude, latitude],
+          ride.destination.coordinates
+        );
+
+        const notificationService = require("../services/notificationService");
+        notificationService.updateDriverLocation(booking.user_id.toString(), {
+          latitude,
+          longitude,
+          eta_minutes: eta.eta_minutes,
+          distance_meters: eta.distance_meters,
+        });
+      } catch (error) {
+        console.error("Error calculating ETA:", error.message);
+      }
+    }
 
     res.status(200).json({
       success: true,
-      message: 'Check-in code generated',
-      code,
-      expiry,
+      message: "Location updated successfully",
     });
   } catch (error) {
-    logger.error(`Generate check-in code error: ${error.message}`);
-    res.status(500).json({
-      success: false,
-      error: 'Failed to generate check-in code',
-    });
+    next(error);
   }
 };
 
 /**
- * Start ride
+ * @swagger
+ * /api/rides/{id}/end:
+ *   post:
+ *     summary: End ride (Driver only)
+ *     tags: [Rides]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: string
+ *     responses:
+ *       200:
+ *         description: Ride ended successfully
  */
-exports.startRide = async (req, res) => {
+const endRide = async (req, res, next) => {
   try {
-    const { id } = req.params;
-    const driverId = req.user._id;
+    const ride = await Ride.findById(req.params.id);
 
-    const ride = await Ride.findOne({ _id: id, driver_id: driverId });
     if (!ride) {
       return res.status(404).json({
         success: false,
-        error: 'Ride not found',
+        message: "Ride not found",
       });
     }
 
-    if (ride.status !== 'available') {
+    // Verify driver owns this ride
+    const driver = await Driver.findOne({ user_id: req.user._id });
+    if (!driver || ride.driver_id.toString() !== driver._id.toString()) {
+      return res.status(403).json({
+        success: false,
+        message: "Not authorized to end this ride",
+      });
+    }
+
+    if (ride.status === "completed") {
       return res.status(400).json({
         success: false,
-        error: 'Ride cannot be started',
+        message: "Ride already completed",
       });
     }
 
-    ride.status = 'in_progress';
-    await ride.save();
-
-    // Get all students in this ride
-    const bookings = await Booking.find({ ride_id: id, status: 'accepted' });
-    const studentIds = bookings.map((b) => b.student_id.toString());
-
-    // Update booking status
-    await Booking.updateMany(
-      { ride_id: id, status: 'accepted' },
-      { status: 'in_progress' }
-    );
-
-    // Notify students
-    notifyRideStarted(id, studentIds);
-
-    // Invalidate caches
-    await invalidateRideCaches();
-
-    logger.info(`Ride started: ${id}`);
-
-    res.status(200).json({
-      success: true,
-      message: 'Ride started successfully',
-      ride,
-    });
-  } catch (error) {
-    logger.error(`Start ride error: ${error.message}`);
-    res.status(500).json({
-      success: false,
-      error: 'Failed to start ride',
-    });
-  }
-};
-
-/**
- * Update driver location during ride
- */
-exports.updateLocation = async (req, res) => {
-  try {
-    const { id } = req.params;
-    const { longitude, latitude } = req.body;
-    const driverId = req.user._id;
-
-    const ride = await Ride.findOne({ _id: id, driver_id: driverId });
-    if (!ride) {
-      return res.status(404).json({
-        success: false,
-        error: 'Ride not found',
-      });
-    }
-
-    // Update location
-    ride.updateCurrentLocation(longitude, latitude);
-    await ride.save();
-
-    // Stream location to students via Socket.io
-    streamDriverLocation(id, {
-      longitude,
-      latitude,
-      timestamp: new Date(),
-    });
-
-    res.status(200).json({
-      success: true,
-      message: 'Location updated',
-    });
-  } catch (error) {
-    logger.error(`Update location error: ${error.message}`);
-    res.status(500).json({
-      success: false,
-      error: 'Failed to update location',
-    });
-  }
-};
-
-/**
- * End ride
- */
-exports.endRide = async (req, res) => {
-  try {
-    const { id } = req.params;
-    const driverId = req.user._id;
-
-    const ride = await Ride.findOne({ _id: id, driver_id: driverId });
-    if (!ride) {
-      return res.status(404).json({
-        success: false,
-        error: 'Ride not found',
-      });
-    }
-
-    if (ride.status !== 'in_progress') {
-      return res.status(400).json({
-        success: false,
-        error: 'Ride is not in progress',
-      });
-    }
-
-    ride.status = 'completed';
+    // Update ride status
+    ride.status = "completed";
     ride.ended_at = new Date();
     await ride.save();
 
-    // Get all bookings
-    const bookings = await Booking.find({ ride_id: id });
+    // Update all bookings for this ride
+    await Booking.updateMany(
+      { ride_id: ride._id, status: { $in: ["accepted", "in_progress"] } },
+      { status: "completed" }
+    );
 
-    // Mark checked-in bookings as completed, others as missed
+    // Get all bookings to notify users and send emails
+    const bookings = await Booking.find({ ride_id: ride._id }).populate(
+      "user_id"
+    );
+    const { sendRideCompletionEmail } = require("../services/emailService");
+
     for (const booking of bookings) {
-      if (booking.check_in_status === 'checked_in') {
-        booking.status = 'completed';
-      } else if (booking.status === 'in_progress') {
-        booking.status = 'missed';
+      // Notify via Socket.io
+      notificationService.notifyRideEnded(
+        booking.user_id._id.toString(),
+        driver._id.toString(),
+        {
+          ride_id: ride._id,
+          fare: ride.fare,
+          distance_meters: ride.distance_meters,
+          duration_seconds: ride.duration_seconds,
+        }
+      );
+
+      // Send completion email
+      try {
+        await sendRideCompletionEmail({
+          userName: booking.user_id.name,
+          userEmail: booking.user_id.email,
+          driverName: req.user.name,
+          vehicleModel: driver.vehicle_model,
+          plateNumber: driver.plate_number,
+          pickupLocation: ride.pickup_location.address,
+          destination: ride.destination.address,
+          distance: (ride.distance_meters / 1000).toFixed(2),
+          duration: Math.ceil(ride.duration_seconds / 60),
+          dateTime: new Date().toLocaleString(),
+          fare: ride.fare,
+          paymentMethod: booking.payment_method,
+        });
+      } catch (emailError) {
+        console.error("Error sending completion email:", emailError.message);
       }
-      await booking.save();
     }
-
-    const studentIds = bookings.map((b) => b.student_id.toString());
-
-    // Notify all participants
-    notifyRideCompleted(id, studentIds, driverId.toString());
-
-    // Update driver statistics
-    const driver = await Driver.findById(driverId);
-    driver.total_rides += 1;
-    await driver.save();
-
-    // Invalidate caches
-    await invalidateRideCaches();
-
-    logger.info(`Ride ended: ${id}`);
 
     res.status(200).json({
       success: true,
-      message: 'Ride ended successfully',
-      ride,
+      message: "Ride ended successfully",
+      data: ride,
     });
   } catch (error) {
-    logger.error(`End ride error: ${error.message}`);
-    res.status(500).json({
-      success: false,
-      error: 'Failed to end ride',
-    });
+    next(error);
   }
 };
 
 /**
- * Get ride by ID
+ * @swagger
+ * /api/rides/my-rides:
+ *   get:
+ *     summary: Get driver's rides
+ *     tags: [Rides]
+ *     security:
+ *       - bearerAuth: []
+ *     responses:
+ *       200:
+ *         description: Driver rides retrieved
  */
-exports.getRideById = async (req, res) => {
+const getMyRides = async (req, res, next) => {
   try {
-    const { id } = req.params;
+    const driver = await Driver.findOne({ user_id: req.user._id });
 
-    const ride = await Ride.findById(id)
-      .populate('driver_id', 'name phone rating vehicle_model plate_number')
-      .populate({
-        path: 'bookings',
-        populate: { path: 'student_id', select: 'matric_no first_name last_name' },
-      })
-      .lean();
-
-    if (!ride) {
+    if (!driver) {
       return res.status(404).json({
         success: false,
-        error: 'Ride not found',
+        message: "Driver profile not found",
       });
     }
 
+    const rides = await Ride.find({ driver_id: driver._id })
+      .sort({ createdAt: -1 })
+      .limit(50);
+
     res.status(200).json({
       success: true,
-      ride,
+      count: rides.length,
+      data: rides,
     });
   } catch (error) {
-    logger.error(`Get ride by ID error: ${error.message}`);
-    res.status(500).json({
-      success: false,
-      error: 'Failed to fetch ride',
-    });
+    next(error);
   }
 };
 
-module.exports = exports;
+module.exports = {
+  createRide,
+  getActiveRides,
+  getRideDetails,
+  updateDriverLocation,
+  endRide,
+  getMyRides,
+};

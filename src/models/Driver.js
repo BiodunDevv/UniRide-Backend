@@ -1,5 +1,4 @@
 const mongoose = require("mongoose");
-const bcrypt = require("bcrypt");
 
 /**
  * @swagger
@@ -8,15 +7,13 @@ const bcrypt = require("bcrypt");
  *     Driver:
  *       type: object
  *       required:
- *         - name
- *         - email
+ *         - user_id
  *         - phone
+ *         - vehicle_model
+ *         - plate_number
  *       properties:
- *         name:
+ *         user_id:
  *           type: string
- *         email:
- *           type: string
- *           format: email
  *         phone:
  *           type: string
  *         vehicle_model:
@@ -25,11 +22,16 @@ const bcrypt = require("bcrypt");
  *           type: string
  *         available_seats:
  *           type: number
- *         drivers_license_url:
+ *         drivers_license:
  *           type: string
  *         application_status:
  *           type: string
  *           enum: [pending, approved, rejected]
+ *         approved_by:
+ *           type: string
+ *         approval_date:
+ *           type: string
+ *           format: date-time
  *         status:
  *           type: string
  *           enum: [inactive, active]
@@ -45,61 +47,47 @@ const bcrypt = require("bcrypt");
 
 const driverSchema = new mongoose.Schema(
   {
-    name: {
-      type: String,
-      required: [true, "Name is required"],
-      trim: true,
-      maxlength: [100, "Name cannot exceed 100 characters"],
-    },
-    email: {
-      type: String,
-      required: [true, "Email is required"],
+    user_id: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "User",
+      required: true,
       unique: true,
-      trim: true,
-      lowercase: true,
-      match: [/^\S+@\S+\.\S+$/, "Please provide a valid email"],
-    },
-    password: {
-      type: String,
-      required: [true, "Password is required"],
-      minlength: [6, "Password must be at least 6 characters"],
-      select: false,
     },
     phone: {
       type: String,
       required: [true, "Phone number is required"],
       trim: true,
-      match: [/^[0-9+\-\s()]+$/, "Please provide a valid phone number"],
     },
     vehicle_model: {
       type: String,
+      required: [true, "Vehicle model is required"],
       trim: true,
-      maxlength: [100, "Vehicle model cannot exceed 100 characters"],
     },
     plate_number: {
       type: String,
-      trim: true,
+      required: [true, "Plate number is required"],
+      unique: true,
       uppercase: true,
-      maxlength: [20, "Plate number cannot exceed 20 characters"],
+      trim: true,
     },
     available_seats: {
       type: Number,
       default: 4,
-      min: [1, "Available seats must be at least 1"],
-      max: [8, "Available seats cannot exceed 8"],
+      min: 1,
+      max: 8,
     },
-    drivers_license_url: {
-      type: String,
-      trim: true,
+    drivers_license: {
+      type: String, // URL from frontend/cloudinary
+      required: [true, "Driver license is required"],
     },
     application_status: {
       type: String,
       enum: ["pending", "approved", "rejected"],
-      default: "approved",
+      default: "pending",
     },
     approved_by: {
       type: mongoose.Schema.Types.ObjectId,
-      ref: "Admin",
+      ref: "User",
     },
     approval_date: {
       type: Date,
@@ -107,97 +95,47 @@ const driverSchema = new mongoose.Schema(
     status: {
       type: String,
       enum: ["inactive", "active"],
-      default: "inactive", // Active only after first login and password change
-    },
-    first_login: {
-      type: Boolean,
-      default: true,
-    },
-    password_reset_token: {
-      type: String,
-      select: false,
-    },
-    password_reset_expires: {
-      type: Date,
-      select: false,
+      default: "inactive",
     },
     rating: {
       type: Number,
-      default: 0,
-      min: [0, "Rating cannot be less than 0"],
-      max: [5, "Rating cannot exceed 5"],
+      default: 5.0,
+      min: 0,
+      max: 5,
     },
-    total_rides: {
+    total_ratings: {
       type: Number,
       default: 0,
     },
     bank_name: {
       type: String,
       trim: true,
-      maxlength: [100, "Bank name cannot exceed 100 characters"],
     },
     bank_account_number: {
       type: String,
       trim: true,
-      maxlength: [20, "Bank account number cannot exceed 20 characters"],
     },
     bank_account_name: {
       type: String,
       trim: true,
-      maxlength: [100, "Bank account name cannot exceed 100 characters"],
-    },
-    current_location: {
-      type: {
-        type: String,
-        enum: ["Point"],
-        default: "Point",
-      },
-      coordinates: {
-        type: [Number], // [longitude, latitude]
-        default: [0, 0],
-      },
-    },
-    last_location_update: {
-      type: Date,
     },
   },
   {
-    timestamps: { createdAt: "created_at", updatedAt: "updated_at" },
+    timestamps: true,
   }
 );
 
-// Indexes (email already has unique:true which creates index)
-driverSchema.index({ status: 1 });
-driverSchema.index({ current_location: "2dsphere" }); // Geospatial index
-driverSchema.index({ application_status: 1 });
+// Method to update rating
+driverSchema.methods.updateRating = function (newRating) {
+  const totalRatings = this.total_ratings;
+  const currentRating = this.rating;
 
-// Hash password before saving
-driverSchema.pre("save", async function (next) {
-  if (!this.isModified("password")) {
-    return next();
-  }
+  this.total_ratings = totalRatings + 1;
+  this.rating = (currentRating * totalRatings + newRating) / this.total_ratings;
 
-  const salt = await bcrypt.genSalt(12);
-  this.password = await bcrypt.hash(this.password, salt);
-  next();
-});
-
-// Method to compare passwords
-driverSchema.methods.comparePassword = async function (candidatePassword) {
-  return await bcrypt.compare(candidatePassword, this.password);
+  return this.save();
 };
 
-// Method to update location
-driverSchema.methods.updateLocation = function (longitude, latitude) {
-  this.current_location = {
-    type: "Point",
-    coordinates: [longitude, latitude],
-  };
-  this.last_location_update = new Date();
-};
+const Driver = mongoose.model("Driver", driverSchema);
 
-// Ensure virtuals are included in JSON
-driverSchema.set("toJSON", { virtuals: true });
-driverSchema.set("toObject", { virtuals: true });
-
-module.exports = mongoose.model("Driver", driverSchema);
+module.exports = Driver;

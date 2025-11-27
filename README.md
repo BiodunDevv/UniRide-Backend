@@ -1,555 +1,313 @@
-# UniRide Backend - Version 2.3
+# UniRide Backend
 
-**Secure campus ride-hailing platform for universities**
+UniRide is a secure campus ride-hailing platform designed for universities and campuses. Students and users can create accounts, request rides, track drivers in real-time, and pay via cash or bank transfer. Drivers apply with ID verification. Super Admins manage platform admins. Features include biometric login, single-device restriction, 4-digit ride check-ins, Redis caching, and OpenStreetMap + OpenRouteService routing.
 
-UniRide is a comprehensive ride-hailing solution designed specifically for university campuses. It features biometric authentication, single-device restriction, real-time tracking with OpenStreetMap + OpenRouteService, 4-digit ride check-ins, admin-controlled fares, driver onboarding with document upload, and secure payment handling.
+## 🚀 Features
 
-## 📋 Table of Contents
+### Security
 
-- [Features](#features)
-- [Tech Stack](#tech-stack)
-- [Prerequisites](#prerequisites)
-- [Installation](#installation)
-- [Configuration](#configuration)
-- [Running the Application](#running-the-application)
-- [API Documentation](#api-documentation)
-- [Project Structure](#project-structure)
-- [Key Features Explained](#key-features-explained)
-- [Security](#security)
-- [Deployment](#deployment)
-- [Contributing](#contributing)
+- **JWT Authentication** with device-based single-device restriction
+- **Biometric Authentication** support
+- **First-login password change** enforcement
+- **Password hashing** with bcrypt
+- **Redis-based rate limiting** to prevent API abuse
+- **Helmet.js** for security headers
+- **User flagging** system for admin moderation
 
-## ✨ Features
+### Core Functionality
 
-### Core Features
-- **Biometric Authentication** - Secure login with fingerprint/face ID support
-- **Single-Device Lock** - Each account bound to one device for security
-- **Real-time Tracking** - Live driver location via Socket.io and OpenStreetMap
-- **4-Digit Check-in Codes** - Secure ride verification system
-- **Admin Fare Control** - Flexible fare policies (admin-set, driver-set, or distance-based)
-- **Driver Onboarding** - Complete application and approval workflow
-- **Bank Details Management** - Secure driver payment info (visible only after booking)
-- **Redis Caching** - Hot endpoint caching for optimal performance
-- **Email Notifications** - Brevo-powered transactional emails
-- **Audit Logging** - Complete admin action tracking
-- **Swagger API Documentation** - Interactive API explorer at `/api-docs`
+- **User Registration & Login** with email/matric number
+- **Driver Application System** with admin approval workflow
+- **Real-time Ride Tracking** using Socket.io and GPS
+- **4-Digit Check-in Codes** for ride verification
+- **Multi-payment Support** (Cash & Bank Transfer)
+- **Driver Rating System** (1-5 stars)
+- **Fare Management** (Admin-controlled, Driver-set, or Auto-calculated)
 
-### User Roles
-1. **Super Admin** - Full system control
-2. **Admin** - Manage colleges, departments, drivers, fares
-3. **Student** - Book rides, track drivers, rate experiences
-4. **Driver** - Create rides, manage bookings, update location
+### Maps & Routing
 
-## 🛠 Tech Stack
+- **OpenStreetMap** integration
+- **OpenRouteService** for routing, distance, ETA, and geocoding
+- **Real-time location updates** during rides
+- **Route geometry** visualization support
 
-| Layer | Technology |
-|-------|-----------|
-| **Runtime** | Node.js 18+ |
-| **Framework** | Express.js |
-| **Database** | MongoDB with Mongoose ODM |
-| **Real-time** | Socket.io (WebSockets) |
-| **Cache** | Redis |
-| **Authentication** | JWT + bcrypt |
-| **Maps & Routing** | OpenRouteService + OpenStreetMap |
-| **File Storage** | Cloudinary (frontend upload) |
-| **Email** | Brevo API |
-| **Documentation** | Swagger (swagger-jsdoc + swagger-ui-express) |
-| **Logging** | Winston with daily rotation |
+### Notifications
 
-## 📦 Prerequisites
+- **Email notifications** via Brevo (driver approval/rejection, booking confirmation, ride completion)
+- **Real-time push notifications** via Socket.io (ride requests, acceptance, driver arrival, ride end)
 
-Before you begin, ensure you have:
+### API Documentation
 
-- **Node.js** >= 18.0.0
-- **npm** >= 9.0.0
-- **MongoDB** >= 5.0 (local or Atlas)
-- **Redis** >= 6.0 (local or cloud)
-- **OpenRouteService API Key** - [Get here](https://openrouteservice.org/)
-- **Brevo API Key** - [Get here](https://www.brevo.com/)
-- **Cloudinary Account** - [Sign up](https://cloudinary.com/) (optional, for file uploads)
+- **Swagger/OpenAPI** documentation at `/api-docs`
+- Comprehensive endpoint documentation with request/response schemas
 
-## 🚀 Installation
+## 📋 Prerequisites
 
-### 1. Clone or Extract the Project
+- Node.js >= 18.0.0
+- MongoDB database
+- Redis instance
+- Brevo API key
+- OpenRouteService API key
 
-```cmd
-cd "c:\Users\muham\Desktop\UNIRIDE\UniRide Backend"
+## 🛠️ Installation
+
+1. **Clone the repository**
+
+```bash
+git clone <repository-url>
+cd UniRide-Backend
 ```
 
-### 2. Install Dependencies
+2. **Install dependencies**
 
-```cmd
+```bash
 npm install
 ```
 
-### 3. Configure Environment Variables
+3. **Configure environment variables**
 
-Copy the example environment file:
-
-```cmd
-copy .env.example .env
-```
-
-Edit `.env` with your configuration (see [Configuration](#configuration) section).
-
-### 4. Start MongoDB
-
-Ensure MongoDB is running:
-
-```cmd
-# If using local MongoDB
-net start MongoDB
-
-# Or if using Docker
-docker start mongodb
-```
-
-### 5. Start Redis
-
-Ensure Redis is running:
-
-```cmd
-# If using local Redis
-redis-server
-
-# Or if using Docker
-docker start redis
-```
-
-## ⚙ Configuration
-
-### Environment Variables
-
-Edit the `.env` file with your configuration:
+The `.env` file is already configured with your credentials. Key variables:
 
 ```env
-# Server
 NODE_ENV=development
 PORT=5000
-HOST=localhost
 
-# Database
-MONGODB_URI=mongodb://localhost:27017/uniride
+MONGODB_URI=your_mongodb_connection_string
+REDIS_HOST=your_redis_host
+REDIS_PORT=your_redis_port
+REDIS_PASSWORD=your_redis_password
 
-# Redis
-REDIS_HOST=localhost
-REDIS_PORT=6379
-
-# JWT
-JWT_SECRET=your_super_secret_jwt_key_change_this_in_production
+JWT_SECRET=your_jwt_secret
 JWT_EXPIRE=7d
 
-# OpenRouteService
-ORS_API_KEY=your_openrouteservice_api_key
-ORS_BASE_URL=https://api.openrouteservice.org
-
-# Brevo
+OPENROUTESERVICE_API_KEY=your_ors_api_key
 BREVO_API_KEY=your_brevo_api_key
-BREVO_SENDER_EMAIL=noreply@uniride.com
+BREVO_SENDER_EMAIL=your_sender_email
 BREVO_SENDER_NAME=UniRide
 
-# Fare Policy
-FARE_POLICY_MODE=admin
-# Options: admin, driver, distance_auto
-FARE_BASE_FEE=500
-FARE_PER_METER_RATE=2.5
-DEFAULT_FARE=1000
+FRONTEND_URL=http://localhost:3000
 
-# Ride Configuration
-RIDE_SEARCH_RADIUS_KM=5
-DRIVER_ACCEPT_WINDOW_SECONDS=20
-MAX_BOOKING_SEATS=4
-
-# CORS
-CORS_ORIGIN=http://localhost:3000
+DEFAULT_SUPER_ADMIN_EMAIL=admin@uniride.com
+DEFAULT_SUPER_ADMIN_PASSWORD=secure_password
+DEFAULT_SUPER_ADMIN_FIRST_NAME=Admin
+DEFAULT_SUPER_ADMIN_LAST_NAME=User
 ```
 
-### API Keys Setup
+4. **Start the server**
 
-1. **OpenRouteService**:
-   - Sign up at https://openrouteservice.org/
-   - Get your free API key (limit: 2000 requests/day)
-   - Add to `ORS_API_KEY` in `.env`
+Development mode:
 
-2. **Brevo (Sendinblue)**:
-   - Create account at https://www.brevo.com/
-   - Generate API key from Settings > API Keys
-   - Add to `BREVO_API_KEY` in `.env`
-
-3. **Cloudinary** (Optional):
-   - Files are uploaded from frontend directly
-   - Backend only stores returned URLs
-
-## 🏃 Running the Application
-
-### Development Mode (with auto-reload)
-
-```cmd
+```bash
 npm run dev
 ```
 
-### Production Mode
+Production mode:
 
-```cmd
+```bash
 npm start
 ```
 
-### Run with Seed Data
-
-```cmd
-npm run seed
-```
-
-This creates:
-- Super admin account
-- Sample colleges and departments
-- Test student accounts
-
-### The server will start on:
-- **API**: `http://localhost:5000`
-- **Swagger Docs**: `http://localhost:5000/api-docs`
-- **Socket.io**: `ws://localhost:5000`
-
 ## 📚 API Documentation
 
-### Accessing Swagger UI
-
-Once the server is running, visit:
+Once the server is running, access the interactive API documentation at:
 
 ```
 http://localhost:5000/api-docs
 ```
 
-### Main Endpoint Groups
+## 🔑 API Endpoints Overview
 
-| Group | Base Path | Description |
-|-------|-----------|-------------|
-| **Authentication** | `/api/auth` | Login, biometric, password change |
-| **Admin** | `/api/admin` | Colleges, departments, driver approvals, fare policy |
-| **College** | `/api/colleges` | College management |
-| **Department** | `/api/departments` | Department management |
-| **Student** | `/api/student` | Profile, bookings, ride history |
-| **Driver** | `/api/driver` | Applications, rides, bank details |
-| **Ride** | `/api/rides` | Create, list, track rides |
-| **Booking** | `/api/booking` | Confirm bookings, payments |
+### Authentication (`/api/auth`)
 
-### Authentication
+- `POST /register` - User registration
+- `POST /login` - Login with email/password + device_id
+- `POST /biometric` - Biometric authentication
+- `POST /logout` - Logout and free device_id
+- `PATCH /change-password` - Change password (required on first login)
+- `PATCH /enable-biometric` - Enable biometric auth
+- `GET /me` - Get current user profile
 
-All protected routes require a JWT token in the Authorization header:
+### Driver (`/api/driver`)
 
-```
-Authorization: Bearer <your_jwt_token>
-```
+- `POST /apply` - Submit driver application
+- `GET /status` - Check application status
+- `GET /profile` - Get driver profile
+- `PATCH /profile` - Update profile or add bank info
+- `PATCH /toggle-status` - Toggle availability (active/inactive)
 
-### Example API Calls
+### Admin (`/api/admin`)
 
-**Login (Student)**:
-```bash
-POST http://localhost:5000/api/auth/login
-Content-Type: application/json
+- `POST /create` - Create admin account (Super Admin only)
+- `GET /drivers/pending` - Get pending applications
+- `GET /drivers/all` - Get all applications
+- `PATCH /drivers/approve/:id` - Approve driver
+- `PATCH /drivers/reject/:id` - Reject driver
+- `GET /drivers/list` - Get all approved drivers
+- `GET /fare-policy` - Get current fare policy
+- `PATCH /fare-policy` - Update fare policy
+- `PATCH /users/flag/:id` - Flag/unflag user
 
-{
-  "identifier": "ABC/2020/12345",
-  "password": "123456",
-  "device_id": "device-unique-id-123"
-}
-```
+### Rides (`/api/rides`)
 
-**Create Ride (Driver)**:
-```bash
-POST http://localhost:5000/api/rides
-Authorization: Bearer <driver_token>
-Content-Type: application/json
+- `POST /` - Create new ride (Driver only)
+- `GET /active` - Get all active rides
+- `GET /my-rides` - Get driver's rides
+- `GET /:id` - Get ride details
+- `POST /:id/location` - Update driver GPS location
+- `POST /:id/end` - End ride
 
-{
-  "pickup_location": {
-    "coordinates": [7.4893, 9.0765],
-    "address": "Main Gate, University Campus"
-  },
-  "destination": {
-    "coordinates": [7.5012, 9.0823],
-    "address": "Student Hostel Area"
-  },
-  "departure_time": "2025-11-25T14:00:00Z",
-  "available_seats": 4
-}
-```
+### Booking (`/api/booking`)
 
-## 📁 Project Structure
+- `POST /request` - Request ride booking
+- `POST /confirm/:id` - Confirm booking (Driver accepts)
+- `POST /checkin` - Check in with 4-digit code
+- `PATCH /payment-status` - Update payment status
+- `POST /rate` - Rate driver after completion
+- `GET /my-bookings` - Get user's bookings
+- `PATCH /cancel/:id` - Cancel booking
 
-```
-UniRide Backend/
-├── src/
-│   ├── config/               # Configuration files
-│   │   ├── appConfig.js      # App-wide settings
-│   │   ├── db.js             # MongoDB connection
-│   │   ├── redis.js          # Redis connection
-│   │   ├── ors.js            # OpenRouteService config
-│   │   ├── brevo.js          # Brevo email config
-│   │   ├── swagger.js        # Swagger setup
-│   │   └── logger.js         # Winston logger
-│   │
-│   ├── models/               # Mongoose schemas
-│   │   ├── Admin.js
-│   │   ├── Student.js
-│   │   ├── Driver.js
-│   │   ├── Ride.js
-│   │   ├── Booking.js
-│   │   ├── Application.js
-│   │   ├── College.js
-│   │   └── Department.js
-│   │
-│   ├── controllers/          # Request handlers
-│   │   ├── authController.js
-│   │   ├── adminController.js
-│   │   ├── studentController.js
-│   │   ├── driverController.js
-│   │   ├── rideController.js
-│   │   ├── bookingController.js
-│   │   ├── collegeController.js
-│   │   ├── departmentController.js
-│   │   └── applicationController.js
-│   │
-│   ├── routes/               # API routes
-│   │   ├── authRoutes.js
-│   │   ├── adminRoutes.js
-│   │   ├── studentRoutes.js
-│   │   ├── driverRoutes.js
-│   │   ├── rideRoutes.js
-│   │   ├── bookingRoutes.js
-│   │   ├── collegeRoutes.js
-│   │   ├── departmentRoutes.js
-│   │   └── applicationRoutes.js
-│   │
-│   ├── services/             # Business logic
-│   │   ├── emailService.js   # Brevo email integration
-│   │   ├── orsService.js     # OpenRouteService wrapper
-│   │   ├── cacheService.js   # Redis caching
-│   │   ├── notificationService.js # Socket.io notifications
-│   │   └── auditService.js   # Audit logging
-│   │
-│   ├── middlewares/          # Express middlewares
-│   │   ├── authMiddleware.js      # JWT verification
-│   │   ├── roleMiddleware.js      # Role-based access
-│   │   ├── deviceLockMiddleware.js # Device binding
-│   │   ├── validateMiddleware.js   # Request validation
-│   │   ├── errorHandler.js        # Global error handler
-│   │   └── rateLimiter.js         # Rate limiting
-│   │
-│   ├── utils/                # Helper functions
-│   │   ├── generateCheckInCode.js
-│   │   ├── fareCalculator.js
-│   │   ├── validators.js
-│   │   ├── pagination.js
-│   │   └── geoHelpers.js
-│   │
-│   ├── email_templates/      # HTML email templates
-│   │   ├── driver_approval.html
-│   │   ├── driver_rejection.html
-│   │   ├── booking_confirmation.html
-│   │   ├── ride_completion.html
-│   │   └── ...
-│   │
-│   ├── app.js                # Express app setup
-│   └── server.js             # Server + Socket.io entry point
-│
-├── scripts/
-│   ├── seed.js               # Database seeding
-│   └── migrations.js         # Database migrations
-│
-├── logs/                     # Application logs
-├── docs/                     # Additional documentation
-├── package.json
-├── .env.example
-├── .gitignore
-└── README.md
-```
+## 🎯 User Flows
 
-## 🔑 Key Features Explained
+### Driver Onboarding
 
-### 1. Single-Device Lock
+1. User applies via frontend, uploads license to Cloudinary
+2. Application stored as 'pending', admin notified
+3. Admin reviews and approves/rejects
+4. Driver receives email with login credentials (first name as password)
+5. Driver logs in, forced to change password
+6. Driver adds bank info later (displayed only after booking confirmation)
 
-- Each student account can only be used on one device
-- Device ID is bound on first login
-- Admin can release device binding if needed
-- Prevents account sharing
+### Ride Flow
 
-### 2. Biometric Authentication
+1. User requests ride (pickup & destination)
+2. All available drivers notified via Socket.io
+3. First driver to accept gets assigned
+4. User sees driver info and bank details for payment
+5. User pays via cash or bank transfer
+6. User enters 4-digit code at pickup to start ride
+7. Live tracking via OpenStreetMap + Socket.io
+8. Driver clicks 'End Ride'
+9. Ride marked completed, payment & ratings updated
 
-- Mobile clients handle biometric (fingerprint/face ID)
-- Backend validates biometric token
-- Falls back to password if biometric unavailable
+## 🔒 Security Features
 
-### 3. 4-Digit Check-in System
+- **Single-Device Restriction**: Users can only be logged in on one device at a time
+- **Biometric Authentication**: Optional biometric login support
+- **First Login Password Change**: Drivers must change default password
+- **JWT Tokens**: Secure token-based authentication
+- **Rate Limiting**: Redis-based rate limiting to prevent abuse
+- **Input Validation**: All inputs validated and sanitized
+- **Password Hashing**: Bcrypt with salt rounds
+- **User Flagging**: Admins can flag problematic users
 
-- Driver generates a 4-digit code at pickup
-- Student enters code to confirm boarding
-- Code expires after 10 minutes (configurable)
-- Driver can rotate code anytime
+## 🗺️ Maps & Routing
 
-### 4. Fare Policy Modes
+The platform uses **OpenRouteService** for:
 
-**Admin Mode** (Default):
-- Admin sets fixed fare per route or default fare
-- Stored when ride is created
+- Route calculation between pickup and destination
+- Distance calculation (meters)
+- Duration estimation (seconds)
+- Geocoding (address to coordinates)
+- Reverse geocoding (coordinates to address)
 
-**Driver Mode** (Optional toggle):
-- Driver sets fare at ride creation
-- Useful for flexible pricing
+Real-time tracking uses **Socket.io** to stream driver location updates to users.
 
-**Distance Auto Mode** (Optional toggle):
-- Fare calculated automatically: `base_fee + (distance_meters × per_meter_rate)`
-- Uses OpenRouteService distance API
+## 📧 Email Templates
 
-### 5. Real-time Tracking
+Located in `src/emails/`:
 
-- Driver streams location via Socket.io
-- Students subscribe to `ride:<ride_id>` room
-- Backend broadcasts location updates
-- Frontend displays on OpenStreetMap tiles
+- `driverApproval.html` - Driver approval with credentials
+- `driverRejection.html` - Driver rejection with reason
+- `rideConfirmation.html` - Booking confirmation with check-in code
+- `rideCompletion.html` - Ride completion receipt
+- `missedRide.html` - Missed ride notification
 
-### 6. Redis Caching Strategy
+## 🚀 Deployment
 
-Cached endpoints with TTL:
-- `GET /api/rides/nearby` - 5-10s
-- `GET /api/rides/active` - 3-10s
-- `GET /api/admin/overview` - 30-60s
-- ORS direction requests - 300s
+The backend can be deployed to:
 
-### 7. Driver Onboarding Flow
-
-1. **Apply**: Driver submits application with license image (Cloudinary URL)
-2. **Review**: Admin reviews documents
-3. **Approve/Reject**: Admin decision triggers email with credentials
-4. **First Login**: Driver must change password (default = first name)
-5. **Add Bank Details**: Driver adds bank info post-approval
-6. **Go Active**: Driver status becomes 'active'
-
-## 🔒 Security
-
-### Implemented Security Measures
-
-✅ **Password Hashing** - bcrypt with 12 rounds  
-✅ **JWT Authentication** - Secure token-based auth  
-✅ **Rate Limiting** - Redis-backed rate limiter  
-✅ **Input Validation** - Joi schema validation  
-✅ **Mongo Sanitization** - Prevent NoSQL injection  
-✅ **XSS Protection** - xss-clean middleware  
-✅ **HPP Protection** - Prevent HTTP parameter pollution  
-✅ **Helmet** - Security headers  
-✅ **CORS** - Configurable origins  
-✅ **Device Binding** - Single device per student  
-✅ **Audit Logging** - Track all admin actions  
-
-### Best Practices
-
-- Never commit `.env` file
-- Rotate JWT secrets regularly
-- Use HTTPS in production
-- Keep dependencies updated
-- Monitor audit logs
-
-## 🚢 Deployment
-
-### Deploy to Render
-
-1. Push code to GitHub
-2. Create new Web Service on Render
-3. Connect GitHub repository
-4. Set environment variables
-5. Deploy
-
-```bash
-Build Command: npm install
-Start Command: npm start
-```
-
-### Deploy to Railway
-
-1. Install Railway CLI: `npm i -g railway`
-2. Login: `railway login`
-3. Initialize: `railway init`
-4. Add MongoDB and Redis plugins
-5. Deploy: `railway up`
-
-### Deploy to AWS
-
-See `docs/deployment.md` for detailed AWS deployment guide.
+- **Render**
+- **Railway**
+- **AWS** (EC2, ECS, Lambda)
+- **Heroku**
+- **DigitalOcean**
 
 ### Environment Variables for Production
 
-Ensure these are set:
+Ensure all environment variables are properly set in your deployment platform, especially:
+
 - `NODE_ENV=production`
-- `MONGODB_URI=<production_mongodb_url>`
-- `REDIS_HOST=<production_redis_host>`
-- `JWT_SECRET=<strong_random_secret>`
-- `ORS_API_KEY=<your_key>`
-- `BREVO_API_KEY=<your_key>`
-- `CORS_ORIGIN=<your_frontend_urls>`
-
-## 📊 Performance Optimization
-
-- **Redis caching** on hot endpoints
-- **Database indexing** on frequent queries
-- **Geospatial indexes** for location-based queries
-- **Connection pooling** for MongoDB
-- **Rate limiting** to prevent abuse
-- **Log rotation** with Winston daily rotate
+- Database credentials
+- Redis credentials
+- API keys
+- Frontend URL for CORS
 
 ## 🧪 Testing
 
-```cmd
-# Run tests
+```bash
 npm test
-
-# Run tests with coverage
-npm run test:coverage
 ```
 
-## 📝 Scripts
+## 📝 Project Structure
 
-| Command | Description |
-|---------|-------------|
-| `npm start` | Start production server |
-| `npm run dev` | Start development server with nodemon |
-| `npm run seed` | Seed database with initial data |
-| `npm run migrate` | Run database migrations |
-| `npm test` | Run test suite |
-| `npm run lint` | Lint code with ESLint |
-| `npm run format` | Format code with Prettier |
+```
+UniRide-Backend/
+├── src/
+│   ├── config/          # Configuration files (DB, Redis, Brevo, ORS, Swagger)
+│   ├── controllers/     # Route controllers
+│   ├── emails/          # Email templates
+│   ├── middlewares/     # Express middlewares
+│   ├── models/          # Mongoose models
+│   ├── routes/          # API routes
+│   ├── services/        # Business logic services
+│   ├── utils/           # Utility functions
+│   ├── app.js           # Express app setup
+│   └── server.js        # Server entry point
+├── .env                 # Environment variables
+├── .gitignore
+├── package.json
+└── README.md
+```
 
-## 🤝 Contributing
+## 👥 User Roles
 
-1. Fork the repository
-2. Create feature branch: `git checkout -b feature/AmazingFeature`
-3. Commit changes: `git commit -m 'Add AmazingFeature'`
-4. Push to branch: `git push origin feature/AmazingFeature`
-5. Open a Pull Request
+- **user**: Regular users who book rides
+- **driver**: Approved drivers who offer rides
+- **admin**: Platform administrators who manage drivers
+- **super_admin**: Super administrators who can create admins
+
+## 🔄 Fare Policy Modes
+
+1. **Admin-controlled**: Admin sets fare per route or flat rate (default)
+2. **Driver-settable**: Drivers can set their own fare (future toggle)
+3. **Auto-calculate by distance**: Fare calculated using distance and duration
+
+## 📊 Real-time Features
+
+Socket.io events:
+
+- `new-ride-request` - Broadcast to available drivers
+- `ride-accepted` - Notify user of driver acceptance
+- `booking-confirmed` - Notify driver of booking confirmation
+- `driver-arrived` - Notify user of driver arrival
+- `driver-location-update` - Real-time GPS updates
+- `ride-ended` - Notify both parties of ride completion
+- `ride-cancelled` - Notify of cancellation
+
+## 🛡️ Rate Limiting
+
+- **Auth endpoints**: 5 requests per 15 minutes
+- **API endpoints**: 100 requests per 15 minutes
+- **Strict endpoints**: 10 requests per minute
 
 ## 📄 License
 
-This project is licensed under the MIT License.
+MIT
 
-## 👥 Team
+## 👨‍💻 Support
 
-UniRide Development Team
-
-## 📞 Support
-
-For issues or questions:
-- Email: support@uniride.com
-- GitHub Issues: [Create an issue](https://github.com/your-repo/issues)
-
-## 🗺 Roadmap
-
-- [ ] Payment gateway integration (Paystack/Flutterwave)
-- [ ] FCM push notifications
-- [ ] Advanced analytics dashboard
-- [ ] Multi-language support
-- [ ] In-app chat between student and driver
-- [ ] Scheduled rides
-- [ ] Ride sharing optimization algorithm
+For issues or questions, please contact the development team.
 
 ---
 
-**Built with ❤️ for safer campus transportation**
+**Built with ❤️ for UniRide**

@@ -1,0 +1,240 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Driver Application Approved - UniRide</title>
+  </head>
+  <body
+    style="
+      margin: 0;
+      padding: 0;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto,
+        Helvetica, Arial, sans-serif;
+      background-color: #f0f1f3;
+    "
+  >
+    <table
+      cellpadding="0"
+      cellspacing="0"
+      border="0"
+      width="100%"
+      style="background-color: #f0f1f3; padding: 40px 20px"
+    >
+      <tr>
+        <td align="center">
+          <table
+            cellpadding="0"
+            cellspacing="0"
+            border="0"
+            width="600"
+            style="
+              background-color: #ffffff;
+              border: 2px solid #042f40;
+              border-radius: 12px;
+              overflow: hidden;
+            "
+          >
+            <!-- Header with Success Icon -->
+            <tr>
+              <td
+                style="
+                  background-color: #042f40;
+                  padding: 50px 40px;
+                  text-align: center;
+                "
+              >
+                <div style="margin-bottom: 20px">
+                  <svg
+                    width="80"
+                    height="80"
+                    viewBox="0 0 100 100"
+                    xmlns="http://www.w3.org/2000/svg"
+                    style="display: inline-block"
+                  >
+                    <circle
+                      cx="50"
+                      cy="50"
+                      r="35"
+                      fill="none"
+                      stroke="#F0F1F3"
+                      stroke-width="4"
+                    />
+                    <path
+                      d="M 35 50 L 45 60 L 65 40"
+                      fill="none"
+                      stroke="#F0F1F3"
+                      stroke-width="5"
+                      stroke-linecap="round"
+                    />
+                  </svg>
+                </div>
+                <h1
+                  style="
+                    margin: 0;
+                    color: #f0f1f3;
+                    font-size: 36px;
+                    font-weight: 700;
+                  "
+                >
+                  Application Approved!
+                </h1>
+                <p
+                  style="
+                    margin: 12px 0 0 0;
+                    color: #f0f1f3;
+                    font-size: 15px;
+                    font-weight: 500;
+                    letter-spacing: 1px;
+                    text-transform: uppercase;
+                    opacity: 0.9;
+                  "
+                >
+                  Welcome to UniRide Driver Team
+                </p>
+              </td>
+            </tr>
+
+            <tr>
+              <td style="padding: 50px 40px">
+                <div style="margin-bottom: 40px">
+                  <h2
+                    style="
+                      margin: 0 0 16px 0;
+                      color: #042f40;
+                      font-size: 28px;
+                      font-weight: 700;
+                    "
+                  >
+                    Congratulations {{driverName}}!
+                  </h2>
+                  <p
+                    style="
+                      margin: 0;
+                      color: #4a5568;
+                      font-size: 16px;
+                      line-height: 1.6;
+                    "
+                  >
+                    Great news! Your application to become a UniRide driver has
+                    been approved. You can now start accepting ride requests and
+                    earning money on campus.
+                  </p>
+                </div>
+
+                <table
+                  cellpadding="0"
+                  cellspacing="0"
+                  border="0"
+                  width="100%"
+                  style="
+                    background-color: #f0f1f3;
+                    border: 2px solid #042f40;
+                    border-radius: 10px;
+                    margin: 30px 0;
+                  "
+                >
+                  <tr>
+                    <td style="padding: 24px">
+                      <p
+                        style="
+                          margin: 0 0 16px 0;
+                          color: #042f40;
+                          font-size: 16px;
+                          font-weight: 700;
+                        "
+                      >
+                        Your Login Credentials
+                      </p>
+                      <p
+                        style="
+                          margin: 0 0 8px 0;
+                          color: #4a5568;
+                          font-size: 14px;
+                        "
+                      >
+                        <strong style="color: #042f40">Email:</strong> {{email}}
+                      </p>
+                      <p style="margin: 0; color: #4a5568; font-size: 14px">
+                        <strong style="color: #042f40">Password:</strong>
+                        {{tempPassword}}
+                      </p>
+                    </td>
+                  </tr>
+                </table>
+
+                <table
+                  cellpadding="0"
+                  cellspacing="0"
+                  border="0"
+                  width="100%"
+                  style="
+                    background-color: #042f40;
+                    border-radius: 10px;
+                    margin: 30px 0;
+                  "
+                >
+                  <tr>
+                    <td style="padding: 24px">
+                      <p
+                        style="
+                          margin: 0 0 10px 0;
+                          color: #f0f1f3;
+                          font-size: 16px;
+                          font-weight: 700;
+                        "
+                      >
+                        🔒 Security Recommendation
+                      </p>
+                      <p
+                        style="
+                          margin: 0;
+                          color: #f0f1f3;
+                          font-size: 14px;
+                          line-height: 1.6;
+                          opacity: 0.95;
+                        "
+                      >
+                        Please change your password after your first login to
+                        keep your account secure. You can start accepting rides
+                        immediately after logging in.
+                      </p>
+                    </td>
+                  </tr>
+                </table>
+              </td>
+            </tr>
+
+            <tr>
+              <td
+                style="
+                  background-color: #f0f1f3;
+                  padding: 35px 40px;
+                  text-align: center;
+                  border-top: 2px solid #042f40;
+                "
+              >
+                <p
+                  style="
+                    margin: 0 0 8px 0;
+                    color: #042f40;
+                    font-size: 18px;
+                    font-weight: 700;
+                  "
+                >
+                  UniRide
+                </p>
+                <p style="margin: 0 0 12px 0; color: #6c757d; font-size: 13px">
+                  Campus Ride-Hailing Made Easy
+                </p>
+                <p style="margin: 0; color: #adb5bd; font-size: 12px">
+                  © {{currentYear}} UniRide. All rights reserved.
+                </p>
+              </td>
+            </tr>
+          </table>
+        </td>
+      </tr>
+    </table>
+  </body>
+</html>

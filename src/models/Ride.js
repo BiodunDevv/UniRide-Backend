@@ -1,4 +1,4 @@
-const mongoose = require('mongoose');
+const mongoose = require("mongoose");
 
 /**
  * @swagger
@@ -10,48 +10,53 @@ const mongoose = require('mongoose');
  *         - driver_id
  *         - pickup_location
  *         - destination
+ *         - fare
  *       properties:
  *         driver_id:
  *           type: string
  *         pickup_location:
  *           type: object
- *           properties:
- *             type:
- *               type: string
- *               enum: [Point]
- *             coordinates:
- *               type: array
- *               items:
- *                 type: number
- *             address:
- *               type: string
  *         destination:
  *           type: object
  *         fare:
  *           type: number
+ *         fare_policy_source:
+ *           type: string
+ *           enum: [admin, driver, distance_auto]
  *         departure_time:
  *           type: string
  *           format: date-time
  *         available_seats:
  *           type: number
+ *         booked_seats:
+ *           type: number
  *         status:
  *           type: string
- *           enum: [available, accepted, en_route, arrived, in_progress, completed, cancelled, full]
+ *           enum: [available, accepted, in_progress, completed, cancelled]
+ *         gps_tracking_enabled:
+ *           type: boolean
+ *         route_geometry:
+ *           type: object
+ *         distance_meters:
+ *           type: number
+ *         duration_seconds:
+ *           type: number
+ *         check_in_code:
+ *           type: string
  */
 
 const rideSchema = new mongoose.Schema(
   {
     driver_id: {
       type: mongoose.Schema.Types.ObjectId,
-      ref: 'Driver',
-      required: [true, 'Driver ID is required'],
-      index: true,
+      ref: "Driver",
+      required: true,
     },
     pickup_location: {
       type: {
         type: String,
-        enum: ['Point'],
-        required: true,
+        enum: ["Point"],
+        default: "Point",
       },
       coordinates: {
         type: [Number], // [longitude, latitude]
@@ -59,14 +64,13 @@ const rideSchema = new mongoose.Schema(
       },
       address: {
         type: String,
-        trim: true,
       },
     },
     destination: {
       type: {
         type: String,
-        enum: ['Point'],
-        required: true,
+        enum: ["Point"],
+        default: "Point",
       },
       coordinates: {
         type: [Number], // [longitude, latitude]
@@ -74,71 +78,62 @@ const rideSchema = new mongoose.Schema(
       },
       address: {
         type: String,
-        trim: true,
       },
     },
     fare: {
       type: Number,
-      required: [true, 'Fare is required'],
-      min: [0, 'Fare cannot be negative'],
+      required: true,
+      min: 0,
     },
     fare_policy_source: {
       type: String,
-      enum: ['admin', 'driver', 'distance_auto'],
-      default: 'admin',
+      enum: ["admin", "driver", "distance_auto"],
+      default: "admin",
     },
     departure_time: {
       type: Date,
-      required: [true, 'Departure time is required'],
+      required: true,
     },
     available_seats: {
       type: Number,
-      required: [true, 'Available seats is required'],
-      min: [1, 'Available seats must be at least 1'],
-      max: [8, 'Available seats cannot exceed 8'],
+      required: true,
+      min: 1,
     },
     booked_seats: {
       type: Number,
       default: 0,
-      min: [0, 'Booked seats cannot be negative'],
+      min: 0,
     },
     status: {
       type: String,
-      enum: ['available', 'accepted', 'en_route', 'arrived', 'in_progress', 'completed', 'cancelled', 'full'],
-      default: 'available',
+      enum: ["available", "accepted", "in_progress", "completed", "cancelled"],
+      default: "available",
     },
     gps_tracking_enabled: {
       type: Boolean,
       default: true,
     },
     route_geometry: {
-      type: mongoose.Schema.Types.Mixed, // GeoJSON or encoded polyline
+      type: Object, // GeoJSON from OpenRouteService
     },
     distance_meters: {
       type: Number,
-      min: [0, 'Distance cannot be negative'],
     },
     duration_seconds: {
       type: Number,
-      min: [0, 'Duration cannot be negative'],
     },
     check_in_code: {
       type: String,
       length: 4,
-      match: [/^\d{4}$/, 'Check-in code must be 4 digits'],
-    },
-    check_in_code_expiry: {
-      type: Date,
     },
     current_location: {
       type: {
         type: String,
-        enum: ['Point'],
-        default: 'Point',
+        enum: ["Point"],
+        default: "Point",
       },
       coordinates: {
-        type: [Number], // [longitude, latitude]
-        default: [0, 0],
+        type: [Number], // [longitude, latitude] - updated in real-time
       },
     },
     ended_at: {
@@ -146,40 +141,18 @@ const rideSchema = new mongoose.Schema(
     },
   },
   {
-    timestamps: { createdAt: 'created_at', updatedAt: 'updated_at' },
+    timestamps: true,
   }
 );
 
-// Indexes
-rideSchema.index({ driver_id: 1, status: 1 });
-rideSchema.index({ status: 1 });
-rideSchema.index({ departure_time: 1 });
-rideSchema.index({ pickup_location: '2dsphere' });
-rideSchema.index({ destination: '2dsphere' });
-rideSchema.index({ current_location: '2dsphere' });
+// Index for geospatial queries
+rideSchema.index({ pickup_location: "2dsphere" });
+rideSchema.index({ destination: "2dsphere" });
+rideSchema.index({ current_location: "2dsphere" });
 
-// Virtual for bookings
-rideSchema.virtual('bookings', {
-  ref: 'Booking',
-  localField: '_id',
-  foreignField: 'ride_id',
-});
+// Index for status queries
+rideSchema.index({ status: 1, departure_time: 1 });
 
-// Method to check if ride is full
-rideSchema.methods.isFull = function () {
-  return this.booked_seats >= this.available_seats;
-};
+const Ride = mongoose.model("Ride", rideSchema);
 
-// Method to update current location
-rideSchema.methods.updateCurrentLocation = function (longitude, latitude) {
-  this.current_location = {
-    type: 'Point',
-    coordinates: [longitude, latitude],
-  };
-};
-
-// Ensure virtuals are included in JSON
-rideSchema.set('toJSON', { virtuals: true });
-rideSchema.set('toObject', { virtuals: true });
-
-module.exports = mongoose.model('Ride', rideSchema);
+module.exports = Ride;

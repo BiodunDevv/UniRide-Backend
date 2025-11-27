@@ -1,203 +1,162 @@
-const logger = require('../config/logger');
-
 /**
- * Socket.io notification service
- * This service manages Socket.io connections and broadcasts
+ * Notification service for Socket.io real-time notifications
  */
 
-let io = null;
+let io; // Will be set from server.js
 
-/**
- * Initialize Socket.io instance
- * @param {object} socketIoInstance - Socket.io server instance
- */
-const initialize = (socketIoInstance) => {
-  io = socketIoInstance;
-  logger.info('Notification service initialized with Socket.io');
+const setSocketIO = (socketIO) => {
+  io = socketIO;
 };
 
 /**
- * Get Socket.io instance
- * @returns {object}
+ * Notify all available drivers about a new ride request
+ * @param {Object} rideData Ride information
  */
-const getIO = () => {
+const notifyAvailableDrivers = (rideData) => {
   if (!io) {
-    throw new Error('Socket.io not initialized. Call initialize() first.');
+    console.warn("Socket.io not initialized");
+    return;
   }
-  return io;
-};
 
-/**
- * Emit event to specific user
- * @param {string} userId - User ID
- * @param {string} event - Event name
- * @param {object} data - Event data
- */
-const emitToUser = (userId, event, data) => {
-  try {
-    const socketIo = getIO();
-    socketIo.to(`user:${userId}`).emit(event, data);
-    logger.debug(`Emitted ${event} to user ${userId}`);
-  } catch (error) {
-    logger.error(`Error emitting to user ${userId}: ${error.message}`);
-  }
-};
-
-/**
- * Emit event to specific room
- * @param {string} room - Room name
- * @param {string} event - Event name
- * @param {object} data - Event data
- */
-const emitToRoom = (room, event, data) => {
-  try {
-    const socketIo = getIO();
-    socketIo.to(room).emit(event, data);
-    logger.debug(`Emitted ${event} to room ${room}`);
-  } catch (error) {
-    logger.error(`Error emitting to room ${room}: ${error.message}`);
-  }
-};
-
-/**
- * Broadcast to all connected clients
- * @param {string} event - Event name
- * @param {object} data - Event data
- */
-const broadcast = (event, data) => {
-  try {
-    const socketIo = getIO();
-    socketIo.emit(event, data);
-    logger.debug(`Broadcasted ${event} to all clients`);
-  } catch (error) {
-    logger.error(`Error broadcasting ${event}: ${error.message}`);
-  }
-};
-
-/**
- * Notify new ride request to nearby drivers
- * @param {array} driverIds - Array of driver IDs
- * @param {object} rideRequest - Ride request data
- */
-const notifyDriversNewRequest = (driverIds, rideRequest) => {
-  driverIds.forEach((driverId) => {
-    emitToUser(driverId, 'new_ride_request', rideRequest);
+  io.to("available-drivers").emit("new-ride-request", {
+    ride_id: rideData._id,
+    pickup_location: rideData.pickup_location,
+    destination: rideData.destination,
+    fare: rideData.fare,
+    departure_time: rideData.departure_time,
+    available_seats: rideData.available_seats,
   });
-  logger.info(`Notified ${driverIds.length} drivers of new ride request`);
+
+  console.log(
+    `📢 Broadcast new ride request to available drivers: ${rideData._id}`
+  );
 };
 
 /**
- * Notify student that ride was accepted
- * @param {string} studentId - Student ID
- * @param {object} rideDetails - Ride details
+ * Notify user that a driver has accepted their ride
+ * @param {String} userId User ID
+ * @param {Object} driverData Driver information
  */
-const notifyStudentRideAccepted = (studentId, rideDetails) => {
-  emitToUser(studentId, 'ride_accepted', rideDetails);
-  logger.info(`Notified student ${studentId} of ride acceptance`);
-};
-
-/**
- * Notify student that driver has arrived
- * @param {string} studentId - Student ID
- * @param {object} driverDetails - Driver details
- */
-const notifyStudentDriverArrived = (studentId, driverDetails) => {
-  emitToUser(studentId, 'driver_arrived', driverDetails);
-  logger.info(`Notified student ${studentId} that driver arrived`);
-};
-
-/**
- * Notify ride started
- * @param {string} rideId - Ride ID
- * @param {array} studentIds - Array of student IDs in the ride
- */
-const notifyRideStarted = (rideId, studentIds) => {
-  studentIds.forEach((studentId) => {
-    emitToUser(studentId, 'ride_started', { ride_id: rideId });
-  });
-  logger.info(`Notified students of ride ${rideId} start`);
-};
-
-/**
- * Notify ride completed
- * @param {string} rideId - Ride ID
- * @param {array} studentIds - Array of student IDs in the ride
- * @param {string} driverId - Driver ID
- */
-const notifyRideCompleted = (rideId, studentIds, driverId) => {
-  // Notify students
-  studentIds.forEach((studentId) => {
-    emitToUser(studentId, 'ride_completed', { ride_id: rideId });
-  });
-  
-  // Notify driver
-  emitToUser(driverId, 'ride_completed', { ride_id: rideId });
-  
-  logger.info(`Notified all participants of ride ${rideId} completion`);
-};
-
-/**
- * Stream driver location updates to ride room
- * @param {string} rideId - Ride ID
- * @param {object} location - { latitude, longitude, timestamp }
- */
-const streamDriverLocation = (rideId, location) => {
-  emitToRoom(`ride:${rideId}`, 'driver_location_update', location);
-};
-
-/**
- * Notify booking status change
- * @param {string} studentId - Student ID
- * @param {object} bookingUpdate - Booking update data
- */
-const notifyBookingUpdate = (studentId, bookingUpdate) => {
-  emitToUser(studentId, 'booking_update', bookingUpdate);
-  logger.info(`Notified student ${studentId} of booking update`);
-};
-
-/**
- * Notify driver of new booking
- * @param {string} driverId - Driver ID
- * @param {object} bookingDetails - Booking details
- */
-const notifyDriverNewBooking = (driverId, bookingDetails) => {
-  emitToUser(driverId, 'new_booking', bookingDetails);
-  logger.info(`Notified driver ${driverId} of new booking`);
-};
-
-/**
- * Send push notification (placeholder for FCM integration)
- * @param {string} userId - User ID
- * @param {object} notification - Notification data
- */
-const sendPushNotification = async (userId, notification) => {
-  try {
-    // TODO: Implement FCM push notification
-    logger.info(`Push notification to ${userId}: ${notification.title}`);
-    
-    // For now, just emit via Socket.io as fallback
-    emitToUser(userId, 'notification', notification);
-    
-    return { success: true };
-  } catch (error) {
-    logger.error(`Error sending push notification: ${error.message}`);
-    return { success: false, error: error.message };
+const notifyRideAccepted = (userId, driverData) => {
+  if (!io) {
+    console.warn("Socket.io not initialized");
+    return;
   }
+
+  io.to(`user-${userId}`).emit("ride-accepted", {
+    driver: driverData,
+    message: "Your ride has been accepted!",
+  });
+
+  console.log(`✅ Notified user ${userId} that ride was accepted`);
+};
+
+/**
+ * Notify driver that user has confirmed the booking
+ * @param {String} driverId Driver ID
+ * @param {Object} bookingData Booking information
+ */
+const notifyBookingConfirmed = (driverId, bookingData) => {
+  if (!io) {
+    console.warn("Socket.io not initialized");
+    return;
+  }
+
+  io.to(`driver-${driverId}`).emit("booking-confirmed", {
+    booking: bookingData,
+    message: "Booking confirmed by user",
+  });
+
+  console.log(`✅ Notified driver ${driverId} that booking was confirmed`);
+};
+
+/**
+ * Notify user about driver's arrival
+ * @param {String} userId User ID
+ * @param {Object} driverData Driver information
+ */
+const notifyDriverArrival = (userId, driverData) => {
+  if (!io) {
+    console.warn("Socket.io not initialized");
+    return;
+  }
+
+  io.to(`user-${userId}`).emit("driver-arrived", {
+    driver: driverData,
+    message: "Your driver has arrived at the pickup location",
+  });
+
+  console.log(`🚗 Notified user ${userId} of driver arrival`);
+};
+
+/**
+ * Notify user and driver that ride has ended
+ * @param {String} userId User ID
+ * @param {String} driverId Driver ID
+ * @param {Object} rideData Ride summary
+ */
+const notifyRideEnded = (userId, driverId, rideData) => {
+  if (!io) {
+    console.warn("Socket.io not initialized");
+    return;
+  }
+
+  io.to(`user-${userId}`).emit("ride-ended", {
+    ride: rideData,
+    message: "Your ride has been completed",
+  });
+
+  io.to(`driver-${driverId}`).emit("ride-ended", {
+    ride: rideData,
+    message: "Ride completed successfully",
+  });
+
+  console.log(
+    `🏁 Notified user ${userId} and driver ${driverId} that ride ended`
+  );
+};
+
+/**
+ * Update user with real-time driver location
+ * @param {String} userId User ID
+ * @param {Object} locationData Current location and ETA
+ */
+const updateDriverLocation = (userId, locationData) => {
+  if (!io) {
+    console.warn("Socket.io not initialized");
+    return;
+  }
+
+  io.to(`user-${userId}`).emit("driver-location-update", locationData);
+};
+
+/**
+ * Notify about ride cancellation
+ * @param {String} targetId User or Driver ID
+ * @param {String} targetType 'user' or 'driver'
+ * @param {Object} cancellationData Cancellation information
+ */
+const notifyRideCancellation = (targetId, targetType, cancellationData) => {
+  if (!io) {
+    console.warn("Socket.io not initialized");
+    return;
+  }
+
+  io.to(`${targetType}-${targetId}`).emit("ride-cancelled", {
+    ...cancellationData,
+    message: "Ride has been cancelled",
+  });
+
+  console.log(`❌ Notified ${targetType} ${targetId} of ride cancellation`);
 };
 
 module.exports = {
-  initialize,
-  getIO,
-  emitToUser,
-  emitToRoom,
-  broadcast,
-  notifyDriversNewRequest,
-  notifyStudentRideAccepted,
-  notifyStudentDriverArrived,
-  notifyRideStarted,
-  notifyRideCompleted,
-  streamDriverLocation,
-  notifyBookingUpdate,
-  notifyDriverNewBooking,
-  sendPushNotification,
+  setSocketIO,
+  notifyAvailableDrivers,
+  notifyRideAccepted,
+  notifyBookingConfirmed,
+  notifyDriverArrival,
+  notifyRideEnded,
+  updateDriverLocation,
+  notifyRideCancellation,
 };

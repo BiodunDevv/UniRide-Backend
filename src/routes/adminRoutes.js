@@ -1,236 +1,103 @@
-const express = require('express');
+const express = require("express");
 const router = express.Router();
-const adminController = require('../controllers/adminController');
-const { protect } = require('../middlewares/authMiddleware');
-const { authorize } = require('../middlewares/roleMiddleware');
 const {
-  validateCreateCollege,
-  validateCreateDepartment,
-  validateCreateAdmin,
-  validateUpdateFarePolicy,
-  validateReleaseDevice,
-} = require('../middlewares/validateMiddleware');
-
-// All routes require admin authentication
-router.use(protect);
-router.use(authorize('admin'));
-
-/**
- * @swagger
- * /api/admin/colleges:
- *   post:
- *     summary: Create a new college
- *     tags: [Admin]
- *     security:
- *       - bearerAuth: []
- *     requestBody:
- *       required: true
- *       content:
- *         application/json:
- *           schema:
- *             type: object
- *             properties:
- *               name:
- *                 type: string
- *               code:
- *                 type: string
- *     responses:
- *       201:
- *         description: College created successfully
- */
-router.post('/colleges', validateCreateCollege, adminController.createCollege);
+  createAdmin,
+  getAllAdmins,
+  updateAdmin,
+  deleteAdmin,
+  getPendingApplications,
+  getAllApplications,
+  approveDriver,
+  rejectDriver,
+  getAllDrivers,
+  deleteDriver,
+  getAllUsers,
+  deleteUser,
+  getFarePolicy,
+  updateFarePolicy,
+  flagUser,
+} = require("../controllers/adminController");
+const { protect } = require("../middlewares/authMiddleware");
+const authorize = require("../middlewares/roleMiddleware");
 
 /**
  * @swagger
- * /api/admin/departments:
- *   post:
- *     summary: Create a new department
- *     tags: [Admin]
- *     security:
- *       - bearerAuth: []
- *     requestBody:
- *       required: true
- *       content:
- *         application/json:
- *           schema:
- *             type: object
- *             properties:
- *               name:
- *                 type: string
- *               code:
- *                 type: string
- *               college_id:
- *                 type: string
- *     responses:
- *       201:
- *         description: Department created successfully
+ * tags:
+ *   name: Admin
+ *   description: Admin management endpoints
  */
-router.post('/departments', validateCreateDepartment, adminController.createDepartment);
 
-/**
- * @swagger
- * /api/admin/admins:
- *   post:
- *     summary: Create a new admin (super_admin only)
- *     tags: [Admin]
- *     security:
- *       - bearerAuth: []
- *     requestBody:
- *       required: true
- *       content:
- *         application/json:
- *           schema:
- *             type: object
- *             properties:
- *               first_name:
- *                 type: string
- *               last_name:
- *                 type: string
- *               email:
- *                 type: string
- *               password:
- *                 type: string
- *               role:
- *                 type: string
- *                 enum: [admin, super_admin]
- *     responses:
- *       201:
- *         description: Admin created successfully
- */
-router.post('/admins', validateCreateAdmin, adminController.createAdmin);
+// Super admin only routes
+router.post("/create", protect, authorize("super_admin"), createAdmin);
+router.get("/list", protect, authorize("super_admin"), getAllAdmins);
+router.patch("/update/:id", protect, authorize("super_admin"), updateAdmin);
+router.delete("/delete/:id", protect, authorize("super_admin"), deleteAdmin);
 
-/**
- * @swagger
- * /api/admin/applications/pending:
- *   get:
- *     summary: Get all pending driver applications
- *     tags: [Admin]
- *     security:
- *       - bearerAuth: []
- *     parameters:
- *       - in: query
- *         name: page
- *         schema:
- *           type: integer
- *       - in: query
- *         name: limit
- *         schema:
- *           type: integer
- *     responses:
- *       200:
- *         description: Pending applications retrieved
- */
-router.get('/applications/pending', adminController.getPendingApplications);
+// Admin and super admin routes
+router.get(
+  "/drivers/pending",
+  protect,
+  authorize("admin", "super_admin"),
+  getPendingApplications
+);
+router.get(
+  "/drivers/all",
+  protect,
+  authorize("admin", "super_admin"),
+  getAllApplications
+);
+router.patch(
+  "/drivers/approve/:id",
+  protect,
+  authorize("admin", "super_admin"),
+  approveDriver
+);
+router.patch(
+  "/drivers/reject/:id",
+  protect,
+  authorize("admin", "super_admin"),
+  rejectDriver
+);
+router.get(
+  "/drivers/list",
+  protect,
+  authorize("admin", "super_admin"),
+  getAllDrivers
+);
+router.delete(
+  "/drivers/delete/:id",
+  protect,
+  authorize("admin", "super_admin"),
+  deleteDriver
+);
 
-/**
- * @swagger
- * /api/admin/drivers/{applicationId}/approve:
- *   post:
- *     summary: Approve driver application
- *     tags: [Admin]
- *     security:
- *       - bearerAuth: []
- *     parameters:
- *       - in: path
- *         name: applicationId
- *         required: true
- *         schema:
- *           type: string
- *     responses:
- *       200:
- *         description: Driver approved successfully
- */
-router.post('/drivers/:applicationId/approve', adminController.approveDriver);
+// Fare policy
+router.get(
+  "/fare-policy",
+  protect,
+  authorize("admin", "super_admin"),
+  getFarePolicy
+);
+router.patch(
+  "/fare-policy",
+  protect,
+  authorize("admin", "super_admin"),
+  updateFarePolicy
+);
 
-/**
- * @swagger
- * /api/admin/drivers/{applicationId}/reject:
- *   post:
- *     summary: Reject driver application
- *     tags: [Admin]
- *     security:
- *       - bearerAuth: []
- *     parameters:
- *       - in: path
- *         name: applicationId
- *         required: true
- *         schema:
- *           type: string
- *     requestBody:
- *       required: true
- *       content:
- *         application/json:
- *           schema:
- *             type: object
- *             properties:
- *               reason:
- *                 type: string
- *     responses:
- *       200:
- *         description: Driver application rejected
- */
-router.post('/drivers/:applicationId/reject', adminController.rejectDriver);
-
-/**
- * @swagger
- * /api/admin/fare-policy:
- *   put:
- *     summary: Update fare policy settings
- *     tags: [Admin]
- *     security:
- *       - bearerAuth: []
- *     requestBody:
- *       required: true
- *       content:
- *         application/json:
- *           schema:
- *             type: object
- *             properties:
- *               mode:
- *                 type: string
- *                 enum: [admin, driver, distance_auto]
- *               base_fee:
- *                 type: number
- *               per_meter_rate:
- *                 type: number
- *     responses:
- *       200:
- *         description: Fare policy updated successfully
- */
-router.put('/fare-policy', validateUpdateFarePolicy, adminController.updateFarePolicy);
-
-/**
- * @swagger
- * /api/admin/overview:
- *   get:
- *     summary: Get admin dashboard overview
- *     tags: [Admin]
- *     security:
- *       - bearerAuth: []
- *     responses:
- *       200:
- *         description: Overview statistics retrieved
- */
-router.get('/overview', adminController.getOverview);
-
-/**
- * @swagger
- * /api/admin/students/{studentId}/release-device:
- *   post:
- *     summary: Release student device binding
- *     tags: [Admin]
- *     security:
- *       - bearerAuth: []
- *     parameters:
- *       - in: path
- *         name: studentId
- *         required: true
- *         schema:
- *           type: string
- *     responses:
- *       200:
- *         description: Device binding released
- */
-router.post('/students/:studentId/release-device', validateReleaseDevice, adminController.releaseDeviceBinding);
+// User management
+router.get("/users", protect, authorize("admin", "super_admin"), getAllUsers);
+router.delete(
+  "/users/delete/:id",
+  protect,
+  authorize("admin", "super_admin"),
+  deleteUser
+);
+router.patch(
+  "/users/flag/:id",
+  protect,
+  authorize("admin", "super_admin"),
+  flagUser
+);
 
 module.exports = router;

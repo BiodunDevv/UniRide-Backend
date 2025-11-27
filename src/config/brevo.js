@@ -1,66 +1,35 @@
-const axios = require('axios');
-const logger = require('./logger');
+const SibApiV3Sdk = require("@getbrevo/brevo");
 
-const BREVO_API_KEY = process.env.BREVO_API_KEY;
-const BREVO_API_URL = 'https://api.brevo.com/v3';
-
-if (!BREVO_API_KEY) {
-  logger.warn('BREVO_API_KEY not set. Email features will not work.');
-}
-
-// Create axios instance for Brevo API
-const brevoClient = axios.create({
-  baseURL: BREVO_API_URL,
-  headers: {
-    'api-key': BREVO_API_KEY,
-    'Content-Type': 'application/json',
-    'Accept': 'application/json',
-  },
-  timeout: 10000,
-});
-
-// Request interceptor
-brevoClient.interceptors.request.use(
-  (config) => {
-    logger.debug(`Brevo Request: ${config.method?.toUpperCase()} ${config.url}`);
-    return config;
-  },
-  (error) => {
-    logger.error(`Brevo Request Error: ${error.message}`);
-    return Promise.reject(error);
-  }
+const apiInstance = new SibApiV3Sdk.TransactionalEmailsApi();
+apiInstance.setApiKey(
+  SibApiV3Sdk.TransactionalEmailsApiApiKeys.apiKey,
+  process.env.BREVO_API_KEY
 );
 
-// Response interceptor
-brevoClient.interceptors.response.use(
-  (response) => {
-    logger.info(`Brevo email sent successfully`);
-    return response;
-  },
-  (error) => {
-    if (error.response) {
-      logger.error(`Brevo API Error: ${error.response.status} - ${JSON.stringify(error.response.data)}`);
-    } else if (error.request) {
-      logger.error(`Brevo Network Error: No response received`);
-    } else {
-      logger.error(`Brevo Error: ${error.message}`);
+const sendEmail = async ({ to, subject, htmlContent, textContent }) => {
+  try {
+    const sendSmtpEmail = new SibApiV3Sdk.SendSmtpEmail();
+
+    sendSmtpEmail.sender = {
+      email: process.env.BREVO_SENDER_EMAIL,
+      name: process.env.BREVO_SENDER_NAME,
+    };
+
+    sendSmtpEmail.to = [{ email: to }];
+    sendSmtpEmail.subject = subject;
+    sendSmtpEmail.htmlContent = htmlContent;
+
+    if (textContent) {
+      sendSmtpEmail.textContent = textContent;
     }
-    return Promise.reject(error);
-  }
-);
 
-const brevoConfig = {
-  client: brevoClient,
-  apiKey: BREVO_API_KEY,
-  apiUrl: BREVO_API_URL,
-  senderEmail: process.env.BREVO_SENDER_EMAIL || 'noreply@uniride.com',
-  senderName: process.env.BREVO_SENDER_NAME || 'UniRide',
-  
-  // Email endpoints
-  endpoints: {
-    sendTransactionalEmail: '/smtp/email',
-    sendTemplateEmail: '/smtp/email',
-  },
+    const result = await apiInstance.sendTransacEmail(sendSmtpEmail);
+    console.log(`✅ Email sent to ${to}: ${subject}`);
+    return result;
+  } catch (error) {
+    console.error("❌ Brevo Email Error:", error.message);
+    throw new Error("Failed to send email");
+  }
 };
 
-module.exports = brevoConfig;
+module.exports = { sendEmail };

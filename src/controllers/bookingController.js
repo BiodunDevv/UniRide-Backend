@@ -1,535 +1,580 @@
-const Booking = require('../models/Booking');
-const Ride = require('../models/Ride');
-const Student = require('../models/Student');
-const Driver = require('../models/Driver');
-const { sendBookingConfirmationEmail, sendRideCompletionEmail, sendMissedRideAlertEmail } = require('../services/emailService');
-const { notifyBookingCreated, notifyBookingAccepted } = require('../services/notificationService');
-const { invalidateRideCaches } = require('../services/cacheService');
-const { getPaginationParams, createPaginationResponse } = require('../utils/pagination');
-const logger = require('../config/logger');
+const Booking = require("../models/Booking");
+const Ride = require("../models/Ride");
+const Driver = require("../models/Driver");
+const User = require("../models/User");
+const {
+  notifyRideAccepted,
+  notifyBookingConfirmed,
+} = require("../services/notificationService");
+const { sendRideConfirmationEmail } = require("../services/emailService");
 
 /**
- * Create a new booking
+ * @swagger
+ * /api/booking/request:
+ *   post:
+ *     summary: Request a ride booking
+ *     tags: [Booking]
+ *     security:
+ *       - bearerAuth: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - ride_id
+ *               - payment_method
+ *             properties:
+ *               ride_id:
+ *                 type: string
+ *               payment_method:
+ *                 type: string
+ *                 enum: [cash, transfer]
+ *     responses:
+ *       201:
+ *         description: Booking request created
  */
-exports.createBooking = async (req, res) => {
+const requestRide = async (req, res, next) => {
   try {
-    const studentId = req.user._id;
-    const { ride_id } = req.body;
+    const { ride_id, payment_method } = req.body;
 
-    // Check if ride exists and is available
-    const ride = await Ride.findById(ride_id);
+    // Validate payment method
+    if (!["cash", "transfer"].includes(payment_method)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid payment method. Use "cash" or "transfer"',
+      });
+    }
+
+    // Get ride
+    const ride = await Ride.findById(ride_id).populate({
+      path: "driver_id",
+      populate: {
+        path: "user_id",
+        select: "name email",
+      },
+    });
+
     if (!ride) {
       return res.status(404).json({
         success: false,
-        error: 'Ride not found',
+        message: "Ride not found",
       });
     }
 
-    if (ride.status !== 'available') {
+    // Check if ride is available
+    if (ride.status !== "available") {
       return res.status(400).json({
         success: false,
-        error: 'Ride is not available for booking',
+        message: "Ride is not available for booking",
       });
     }
 
-    // Check if student already has a booking for this ride
-    const existingBooking = await Booking.findOne({ student_id: studentId, ride_id });
+    // Check if seats available
+    if (ride.available_seats <= ride.booked_seats) {
+      return res.status(400).json({
+        success: false,
+        message: "No seats available for this ride",
+      });
+    }
+
+    // Check if user already has a booking for this ride
+    const existingBooking = await Booking.findOne({
+      ride_id,
+      user_id: req.user._id,
+      status: { $in: ["active", "accepted", "in_progress"] },
+    });
+
     if (existingBooking) {
       return res.status(400).json({
         success: false,
-        error: 'You have already booked this ride',
+        message: "You already have a booking for this ride",
       });
     }
 
-    // Check if seats are available
-    if (ride.isFull()) {
-      return res.status(400).json({
-        success: false,
-        error: 'No available seats for this ride',
-      });
-    }
-
-    // Check if student has another active booking
-    const activeBooking = await Booking.findOne({
-      student_id: studentId,
-      status: { $in: ['active', 'accepted', 'in_progress'] },
+    // Create booking
+    const booking = await Booking.create({
+      ride_id,
+      user_id: req.user._id,
+      payment_method,
+      status: "active",
     });
 
-    if (activeBooking) {
-      return res.status(400).json({
-        success: false,
-        error: 'You already have an active booking',
-      });
-    }
+    // Increment booked seats
+    ride.booked_seats += 1;
+    await ride.save();
 
-    // Create booking (atomic operation)
-    const session = await Booking.startSession();
-    session.startTransaction();
+    // Populate booking for response
+    await booking.populate("ride_id");
 
-    try {
-      // Increment booked seats
-      const updatedRide = await Ride.findByIdAndUpdate(
-        ride_id,
-        { $inc: { booked_seats: 1 } },
-        { new: true, session }
-      );
-
-      if (updatedRide.booked_seats > updatedRide.available_seats) {
-        throw new Error('No seats available');
-      }
-
-      // Create booking
-      const booking = await Booking.create([{
-        student_id: studentId,
-        ride_id,
-        fare: ride.fare,
-        status: 'active',
-        payment_status: 'pending',
-      }], { session });
-
-      await session.commitTransaction();
-
-      // Add booking to student's history
-      await Student.findByIdAndUpdate(studentId, {
-        $push: { ride_history: booking[0]._id },
-      });
-
-      // Populate booking details
-      const populatedBooking = await Booking.findById(booking[0]._id)
-        .populate('ride_id')
-        .populate('student_id', 'matric_no first_name last_name')
-        .lean();
-
-      // Notify driver
-      notifyBookingCreated(ride.driver_id.toString(), populatedBooking);
-
-      // Send confirmation email
-      const student = await Student.findById(studentId).lean();
-      const driver = await Driver.findById(ride.driver_id).lean();
-      
-      try {
-        await sendBookingConfirmationEmail({
-          studentEmail: student.email,
-          studentName: `${student.first_name} ${student.last_name}`,
-          driverName: driver.name,
-          pickup: ride.pickup_location.address,
-          destination: ride.destination.address,
-          departureTime: ride.departure_time,
-          fare: ride.fare,
-        });
-      } catch (emailError) {
-        logger.warn(`Failed to send booking confirmation email: ${emailError.message}`);
-      }
-
-      // Invalidate ride caches
-      await invalidateRideCaches();
-
-      logger.info(`Booking created: ${booking[0]._id} for ride ${ride_id}`);
-
-      res.status(201).json({
-        success: true,
-        message: 'Booking created successfully',
-        booking: populatedBooking,
-      });
-    } catch (error) {
-      await session.abortTransaction();
-      throw error;
-    } finally {
-      session.endSession();
-    }
+    res.status(201).json({
+      success: true,
+      message: "Ride booking requested. Waiting for driver confirmation.",
+      data: booking,
+    });
   } catch (error) {
-    logger.error(`Create booking error: ${error.message}`);
-    res.status(500).json({
-      success: false,
-      error: error.message || 'Failed to create booking',
-    });
+    next(error);
   }
 };
 
 /**
- * Confirm booking (driver accepts)
+ * @swagger
+ * /api/booking/confirm/{id}:
+ *   post:
+ *     summary: Confirm booking (Driver accepts)
+ *     tags: [Booking]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: string
+ *     responses:
+ *       200:
+ *         description: Booking confirmed
  */
-exports.confirmBooking = async (req, res) => {
+const confirmBooking = async (req, res, next) => {
   try {
-    const { id } = req.params;
-    const driverId = req.user._id;
-
-    const booking = await Booking.findById(id)
-      .populate('ride_id')
-      .populate('student_id', 'email first_name last_name');
+    const booking = await Booking.findById(req.params.id)
+      .populate("user_id")
+      .populate({
+        path: "ride_id",
+        populate: {
+          path: "driver_id",
+        },
+      });
 
     if (!booking) {
       return res.status(404).json({
         success: false,
-        error: 'Booking not found',
+        message: "Booking not found",
       });
     }
 
     // Verify driver owns this ride
-    if (booking.ride_id.driver_id.toString() !== driverId.toString()) {
+    const driver = await Driver.findOne({ user_id: req.user._id });
+    if (
+      !driver ||
+      booking.ride_id.driver_id._id.toString() !== driver._id.toString()
+    ) {
       return res.status(403).json({
         success: false,
-        error: 'Unauthorized',
+        message: "Not authorized to confirm this booking",
       });
     }
 
-    if (booking.status !== 'active') {
+    if (booking.status !== "active") {
       return res.status(400).json({
         success: false,
-        error: 'Booking cannot be confirmed',
-      });
-    }
-
-    booking.status = 'accepted';
-    await booking.save();
-
-    // Get driver bank details to expose to student
-    const driver = await Driver.findById(driverId).select('bank_details name phone vehicle_model plate_number');
-
-    // Notify student
-    notifyBookingAccepted(booking.student_id._id.toString(), {
-      bookingId: booking._id,
-      rideId: booking.ride_id._id,
-      driverDetails: driver,
-    });
-
-    logger.info(`Booking confirmed: ${id}`);
-
-    res.status(200).json({
-      success: true,
-      message: 'Booking confirmed',
-      booking,
-      driver_bank_details: driver.bank_details,
-    });
-  } catch (error) {
-    logger.error(`Confirm booking error: ${error.message}`);
-    res.status(500).json({
-      success: false,
-      error: 'Failed to confirm booking',
-    });
-  }
-};
-
-/**
- * Check-in with 4-digit code
- */
-exports.checkIn = async (req, res) => {
-  try {
-    const { id } = req.params;
-    const { check_in_code } = req.body;
-    const studentId = req.user._id;
-
-    const booking = await Booking.findOne({ _id: id, student_id: studentId })
-      .populate('ride_id');
-
-    if (!booking) {
-      return res.status(404).json({
-        success: false,
-        error: 'Booking not found',
-      });
-    }
-
-    if (booking.status !== 'in_progress') {
-      return res.status(400).json({
-        success: false,
-        error: 'Ride has not started yet',
-      });
-    }
-
-    const ride = booking.ride_id;
-
-    // Validate check-in code
-    if (!ride.check_in_code || ride.check_in_code !== check_in_code) {
-      return res.status(400).json({
-        success: false,
-        error: 'Invalid check-in code',
-      });
-    }
-
-    // Check code expiry
-    if (ride.check_in_code_expiry && new Date() > ride.check_in_code_expiry) {
-      return res.status(400).json({
-        success: false,
-        error: 'Check-in code has expired',
-      });
-    }
-
-    // Mark as checked-in
-    booking.check_in_status = 'checked_in';
-    booking.check_in_time = new Date();
-    await booking.save();
-
-    logger.info(`Student checked in: booking ${id}`);
-
-    res.status(200).json({
-      success: true,
-      message: 'Checked in successfully',
-      booking,
-    });
-  } catch (error) {
-    logger.error(`Check-in error: ${error.message}`);
-    res.status(500).json({
-      success: false,
-      error: 'Failed to check in',
-    });
-  }
-};
-
-/**
- * Update payment status
- */
-exports.updatePaymentStatus = async (req, res) => {
-  try {
-    const { id } = req.params;
-    const { payment_method } = req.body;
-    const studentId = req.user._id;
-
-    const booking = await Booking.findOne({ _id: id, student_id: studentId });
-    if (!booking) {
-      return res.status(404).json({
-        success: false,
-        error: 'Booking not found',
-      });
-    }
-
-    if (!['cash', 'transfer'].includes(payment_method)) {
-      return res.status(400).json({
-        success: false,
-        error: 'Invalid payment method',
-      });
-    }
-
-    booking.payment_method = payment_method;
-    booking.payment_status = 'paid';
-    await booking.save();
-
-    logger.info(`Payment updated: booking ${id}, method: ${payment_method}`);
-
-    res.status(200).json({
-      success: true,
-      message: 'Payment status updated',
-      booking,
-    });
-  } catch (error) {
-    logger.error(`Update payment error: ${error.message}`);
-    res.status(500).json({
-      success: false,
-      error: 'Failed to update payment status',
-    });
-  }
-};
-
-/**
- * Add rating and review
- */
-exports.addRating = async (req, res) => {
-  try {
-    const { id } = req.params;
-    const { rating, review } = req.body;
-    const studentId = req.user._id;
-
-    const booking = await Booking.findOne({ _id: id, student_id: studentId })
-      .populate('ride_id');
-
-    if (!booking) {
-      return res.status(404).json({
-        success: false,
-        error: 'Booking not found',
-      });
-    }
-
-    if (booking.status !== 'completed') {
-      return res.status(400).json({
-        success: false,
-        error: 'Can only rate completed rides',
-      });
-    }
-
-    if (booking.rating) {
-      return res.status(400).json({
-        success: false,
-        error: 'You have already rated this ride',
-      });
-    }
-
-    if (rating < 1 || rating > 5) {
-      return res.status(400).json({
-        success: false,
-        error: 'Rating must be between 1 and 5',
-      });
-    }
-
-    booking.rating = rating;
-    booking.review = review;
-    await booking.save();
-
-    // Update driver's average rating
-    const driverId = booking.ride_id.driver_id;
-    const completedBookings = await Booking.find({
-      ride_id: { $in: await Ride.find({ driver_id: driverId }).distinct('_id') },
-      rating: { $exists: true, $ne: null },
-    });
-
-    const avgRating = completedBookings.reduce((acc, b) => acc + b.rating, 0) / completedBookings.length;
-    
-    await Driver.findByIdAndUpdate(driverId, {
-      rating: avgRating.toFixed(2),
-    });
-
-    logger.info(`Rating added: booking ${id}, rating: ${rating}`);
-
-    res.status(200).json({
-      success: true,
-      message: 'Rating submitted successfully',
-      booking,
-    });
-  } catch (error) {
-    logger.error(`Add rating error: ${error.message}`);
-    res.status(500).json({
-      success: false,
-      error: 'Failed to add rating',
-    });
-  }
-};
-
-/**
- * Cancel booking
- */
-exports.cancelBooking = async (req, res) => {
-  try {
-    const { id } = req.params;
-    const studentId = req.user._id;
-
-    const booking = await Booking.findOne({ _id: id, student_id: studentId })
-      .populate('ride_id');
-
-    if (!booking) {
-      return res.status(404).json({
-        success: false,
-        error: 'Booking not found',
-      });
-    }
-
-    if (!['active', 'accepted'].includes(booking.status)) {
-      return res.status(400).json({
-        success: false,
-        error: 'Cannot cancel this booking',
+        message: `Booking is already ${booking.status}`,
       });
     }
 
     // Update booking status
-    booking.status = 'cancelled';
+    booking.status = "accepted";
+    booking.bank_details_visible = true; // Make bank details visible
     await booking.save();
 
-    // Decrement booked seats
-    await Ride.findByIdAndUpdate(booking.ride_id._id, {
-      $inc: { booked_seats: -1 },
+    // Update ride status if this is the first acceptance
+    const ride = await Ride.findById(booking.ride_id._id);
+    if (ride.status === "available") {
+      ride.status = "accepted";
+      await ride.save();
+    }
+
+    // Notify user
+    notifyRideAccepted(booking.user_id._id.toString(), {
+      driver_name: req.user.name,
+      vehicle: driver.vehicle_model,
+      plate_number: driver.plate_number,
+      phone: driver.phone,
     });
 
-    // Invalidate caches
-    await invalidateRideCaches();
+    // Send confirmation email with bank details if transfer
+    const bankDetails =
+      booking.payment_method === "transfer"
+        ? {
+            bankName: driver.bank_name || "Not provided",
+            accountNumber: driver.bank_account_number || "Not provided",
+            accountName: driver.bank_account_name || "Not provided",
+          }
+        : null;
 
-    logger.info(`Booking cancelled: ${id}`);
+    try {
+      await sendRideConfirmationEmail({
+        userName: booking.user_id.name,
+        userEmail: booking.user_id.email,
+        driverName: req.user.name,
+        vehicleModel: driver.vehicle_model,
+        plateNumber: driver.plate_number,
+        driverRating: driver.rating,
+        pickupLocation: ride.pickup_location.address,
+        destination: ride.destination.address,
+        departureTime: ride.departure_time.toLocaleString(),
+        fare: ride.fare,
+        paymentMethod: booking.payment_method,
+        checkInCode: ride.check_in_code,
+        bankDetails,
+      });
+    } catch (emailError) {
+      console.error("Error sending confirmation email:", emailError.message);
+    }
 
     res.status(200).json({
       success: true,
-      message: 'Booking cancelled successfully',
+      message: "Booking confirmed successfully",
+      data: booking,
     });
   } catch (error) {
-    logger.error(`Cancel booking error: ${error.message}`);
-    res.status(500).json({
-      success: false,
-      error: 'Failed to cancel booking',
-    });
+    next(error);
   }
 };
 
 /**
- * Get booking by ID
+ * @swagger
+ * /api/booking/checkin:
+ *   post:
+ *     summary: Check in to ride with 4-digit code
+ *     tags: [Booking]
+ *     security:
+ *       - bearerAuth: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - booking_id
+ *               - check_in_code
+ *             properties:
+ *               booking_id:
+ *                 type: string
+ *               check_in_code:
+ *                 type: string
+ *     responses:
+ *       200:
+ *         description: Check-in successful
  */
-exports.getBookingById = async (req, res) => {
+const checkInRide = async (req, res, next) => {
   try {
-    const { id } = req.params;
-    const userId = req.user._id;
-    const userType = req.userType;
+    const { booking_id, check_in_code } = req.body;
 
-    const query = { _id: id };
-    
-    // Students can only see their own bookings
-    if (userType === 'student') {
-      query.student_id = userId;
-    }
-
-    const booking = await Booking.findOne(query)
-      .populate('student_id', 'matric_no first_name last_name email phone')
-      .populate({
-        path: 'ride_id',
-        populate: { path: 'driver_id', select: 'name phone rating vehicle_model plate_number bank_details' },
-      })
-      .lean();
+    const booking = await Booking.findById(booking_id).populate("ride_id");
 
     if (!booking) {
       return res.status(404).json({
         success: false,
-        error: 'Booking not found',
+        message: "Booking not found",
       });
     }
 
-    // Hide bank details unless booking is accepted
-    if (userType === 'student' && booking.status !== 'accepted' && booking.status !== 'in_progress') {
-      delete booking.ride_id.driver_id.bank_details;
+    // Verify user owns this booking
+    if (booking.user_id.toString() !== req.user._id.toString()) {
+      return res.status(403).json({
+        success: false,
+        message: "Not authorized",
+      });
     }
+
+    // Verify booking is accepted
+    if (booking.status !== "accepted") {
+      return res.status(400).json({
+        success: false,
+        message: "Booking must be accepted before check-in",
+      });
+    }
+
+    // Verify check-in code
+    if (booking.ride_id.check_in_code !== check_in_code) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid check-in code",
+      });
+    }
+
+    // Update booking
+    booking.check_in_status = "checked_in";
+    booking.status = "in_progress";
+    await booking.save();
+
+    // Update ride status
+    const ride = await Ride.findById(booking.ride_id._id);
+    ride.status = "in_progress";
+    await ride.save();
 
     res.status(200).json({
       success: true,
-      booking,
+      message: "Check-in successful. Ride in progress.",
+      data: booking,
     });
   } catch (error) {
-    logger.error(`Get booking error: ${error.message}`);
-    res.status(500).json({
-      success: false,
-      error: 'Failed to fetch booking',
-    });
+    next(error);
   }
 };
 
 /**
- * Get user bookings with pagination
+ * @swagger
+ * /api/booking/payment-status:
+ *   patch:
+ *     summary: Update payment status
+ *     tags: [Booking]
+ *     security:
+ *       - bearerAuth: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - booking_id
+ *               - payment_status
+ *             properties:
+ *               booking_id:
+ *                 type: string
+ *               payment_status:
+ *                 type: string
+ *                 enum: [pending, paid, not_applicable]
+ *     responses:
+ *       200:
+ *         description: Payment status updated
  */
-exports.getMyBookings = async (req, res) => {
+const updatePaymentStatus = async (req, res, next) => {
   try {
-    const studentId = req.user._id;
-    const { status } = req.query;
-    const { page, limit, skip } = getPaginationParams(req);
+    const { booking_id, payment_status } = req.body;
 
-    const query = { student_id: studentId };
-    if (status) {
-      query.status = status;
+    const booking = await Booking.findById(booking_id);
+
+    if (!booking) {
+      return res.status(404).json({
+        success: false,
+        message: "Booking not found",
+      });
     }
 
-    const bookings = await Booking.find(query)
-      .populate({
-        path: 'ride_id',
-        populate: { path: 'driver_id', select: 'name phone rating vehicle_model plate_number' },
-      })
-      .sort({ createdAt: -1 })
-      .skip(skip)
-      .limit(limit)
-      .lean();
-
-    const total = await Booking.countDocuments(query);
+    booking.payment_status = payment_status;
+    await booking.save();
 
     res.status(200).json({
       success: true,
-      ...createPaginationResponse(bookings, total, page, limit),
+      message: "Payment status updated",
+      data: booking,
     });
   } catch (error) {
-    logger.error(`Get bookings error: ${error.message}`);
-    res.status(500).json({
-      success: false,
-      error: 'Failed to fetch bookings',
-    });
+    next(error);
   }
 };
 
-module.exports = exports;
+/**
+ * @swagger
+ * /api/booking/rate:
+ *   post:
+ *     summary: Rate driver after ride completion
+ *     tags: [Booking]
+ *     security:
+ *       - bearerAuth: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - booking_id
+ *               - rating
+ *             properties:
+ *               booking_id:
+ *                 type: string
+ *               rating:
+ *                 type: number
+ *                 minimum: 1
+ *                 maximum: 5
+ *               feedback:
+ *                 type: string
+ *     responses:
+ *       200:
+ *         description: Rating submitted successfully
+ */
+const rateDriver = async (req, res, next) => {
+  try {
+    const { booking_id, rating, feedback } = req.body;
+
+    if (rating < 1 || rating > 5) {
+      return res.status(400).json({
+        success: false,
+        message: "Rating must be between 1 and 5",
+      });
+    }
+
+    const booking = await Booking.findById(booking_id).populate("ride_id");
+
+    if (!booking) {
+      return res.status(404).json({
+        success: false,
+        message: "Booking not found",
+      });
+    }
+
+    // Verify user owns this booking
+    if (booking.user_id.toString() !== req.user._id.toString()) {
+      return res.status(403).json({
+        success: false,
+        message: "Not authorized",
+      });
+    }
+
+    // Verify ride is completed
+    if (booking.status !== "completed") {
+      return res.status(400).json({
+        success: false,
+        message: "Can only rate completed rides",
+      });
+    }
+
+    // Check if already rated
+    if (booking.rating) {
+      return res.status(400).json({
+        success: false,
+        message: "You have already rated this ride",
+      });
+    }
+
+    // Update booking
+    booking.rating = rating;
+    booking.feedback = feedback;
+    await booking.save();
+
+    // Update driver rating
+    const driver = await Driver.findById(booking.ride_id.driver_id);
+    await driver.updateRating(rating);
+
+    res.status(200).json({
+      success: true,
+      message: "Thank you for your rating!",
+      data: {
+        rating,
+        driver_rating: driver.rating,
+      },
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * @swagger
+ * /api/booking/my-bookings:
+ *   get:
+ *     summary: Get user's bookings
+ *     tags: [Booking]
+ *     security:
+ *       - bearerAuth: []
+ *     responses:
+ *       200:
+ *         description: Bookings retrieved
+ */
+const getMyBookings = async (req, res, next) => {
+  try {
+    const bookings = await Booking.find({ user_id: req.user._id })
+      .populate({
+        path: "ride_id",
+        populate: {
+          path: "driver_id",
+          populate: {
+            path: "user_id",
+            select: "name email",
+          },
+        },
+      })
+      .sort({ createdAt: -1 })
+      .limit(50);
+
+    res.status(200).json({
+      success: true,
+      count: bookings.length,
+      data: bookings,
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * @swagger
+ * /api/booking/cancel/{id}:
+ *   patch:
+ *     summary: Cancel booking
+ *     tags: [Booking]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: string
+ *     responses:
+ *       200:
+ *         description: Booking cancelled
+ */
+const cancelBooking = async (req, res, next) => {
+  try {
+    const booking = await Booking.findById(req.params.id).populate("ride_id");
+
+    if (!booking) {
+      return res.status(404).json({
+        success: false,
+        message: "Booking not found",
+      });
+    }
+
+    // Verify user owns this booking
+    if (booking.user_id.toString() !== req.user._id.toString()) {
+      return res.status(403).json({
+        success: false,
+        message: "Not authorized",
+      });
+    }
+
+    // Can't cancel completed rides
+    if (booking.status === "completed") {
+      return res.status(400).json({
+        success: false,
+        message: "Cannot cancel completed rides",
+      });
+    }
+
+    // Update booking
+    booking.status = "cancelled";
+    await booking.save();
+
+    // Decrease booked seats
+    const ride = await Ride.findById(booking.ride_id._id);
+    if (ride.booked_seats > 0) {
+      ride.booked_seats -= 1;
+      await ride.save();
+    }
+
+    res.status(200).json({
+      success: true,
+      message: "Booking cancelled successfully",
+      data: booking,
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+module.exports = {
+  requestRide,
+  confirmBooking,
+  checkInRide,
+  updatePaymentStatus,
+  rateDriver,
+  getMyBookings,
+  cancelBooking,
+};

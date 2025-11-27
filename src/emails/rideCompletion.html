@@ -1,0 +1,307 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Ride Completed - UniRide</title>
+  </head>
+  <body
+    style="
+      margin: 0;
+      padding: 0;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto,
+        Helvetica, Arial, sans-serif;
+      background-color: #f0f1f3;
+    "
+  >
+    <table
+      cellpadding="0"
+      cellspacing="0"
+      border="0"
+      width="100%"
+      style="background-color: #f0f1f3; padding: 40px 20px"
+    >
+      <tr>
+        <td align="center">
+          <table
+            cellpadding="0"
+            cellspacing="0"
+            border="0"
+            width="600"
+            style="
+              background-color: #ffffff;
+              border: 2px solid #042f40;
+              border-radius: 12px;
+              overflow: hidden;
+            "
+          >
+            <!-- Header with Receipt Icon -->
+            <tr>
+              <td
+                style="
+                  background-color: #042f40;
+                  padding: 50px 40px;
+                  text-align: center;
+                "
+              >
+                <div style="margin-bottom: 20px">
+                  <svg
+                    width="80"
+                    height="80"
+                    viewBox="0 0 100 100"
+                    xmlns="http://www.w3.org/2000/svg"
+                    style="display: inline-block"
+                  >
+                    <rect
+                      x="30"
+                      y="20"
+                      width="40"
+                      height="60"
+                      rx="3"
+                      fill="none"
+                      stroke="#F0F1F3"
+                      stroke-width="4"
+                    />
+                    <line
+                      x1="38"
+                      y1="35"
+                      x2="62"
+                      y2="35"
+                      stroke="#F0F1F3"
+                      stroke-width="2"
+                    />
+                    <line
+                      x1="38"
+                      y1="45"
+                      x2="62"
+                      y2="45"
+                      stroke="#F0F1F3"
+                      stroke-width="2"
+                    />
+                    <line
+                      x1="38"
+                      y1="55"
+                      x2="55"
+                      y2="55"
+                      stroke="#F0F1F3"
+                      stroke-width="2"
+                    />
+                  </svg>
+                </div>
+                <h1
+                  style="
+                    margin: 0;
+                    color: #f0f1f3;
+                    font-size: 36px;
+                    font-weight: 700;
+                  "
+                >
+                  Ride Completed
+                </h1>
+                <p
+                  style="
+                    margin: 12px 0 0 0;
+                    color: #f0f1f3;
+                    font-size: 15px;
+                    font-weight: 500;
+                    letter-spacing: 1px;
+                    text-transform: uppercase;
+                    opacity: 0.9;
+                  "
+                >
+                  Trip Receipt
+                </p>
+              </td>
+            </tr>
+
+            <tr>
+              <td style="padding: 50px 40px">
+                <div style="margin-bottom: 40px">
+                  <h2
+                    style="
+                      margin: 0 0 16px 0;
+                      color: #042f40;
+                      font-size: 28px;
+                      font-weight: 700;
+                    "
+                  >
+                    Hi {{userName}},
+                  </h2>
+                  <p
+                    style="
+                      margin: 0;
+                      color: #4a5568;
+                      font-size: 16px;
+                      line-height: 1.6;
+                    "
+                  >
+                    Thank you for riding with UniRide! Your trip has been
+                    completed successfully. Here's your receipt.
+                  </p>
+                </div>
+
+                <table
+                  cellpadding="0"
+                  cellspacing="0"
+                  border="0"
+                  width="100%"
+                  style="
+                    background-color: #f0f1f3;
+                    border: 2px solid #042f40;
+                    border-radius: 10px;
+                    margin: 30px 0;
+                  "
+                >
+                  <tr>
+                    <td style="padding: 24px">
+                      <p
+                        style="
+                          margin: 0 0 16px 0;
+                          color: #042f40;
+                          font-size: 16px;
+                          font-weight: 700;
+                        "
+                      >
+                        Trip Summary
+                      </p>
+                      <p
+                        style="
+                          margin: 0 0 8px 0;
+                          color: #4a5568;
+                          font-size: 14px;
+                        "
+                      >
+                        <strong style="color: #042f40">Driver:</strong>
+                        {{driverName}}
+                      </p>
+                      <p
+                        style="
+                          margin: 0 0 8px 0;
+                          color: #4a5568;
+                          font-size: 14px;
+                        "
+                      >
+                        <strong style="color: #042f40">Date:</strong>
+                        {{completionDate}}
+                      </p>
+                      <p
+                        style="
+                          margin: 0 0 8px 0;
+                          color: #4a5568;
+                          font-size: 14px;
+                        "
+                      >
+                        <strong style="color: #042f40">Distance:</strong>
+                        {{distance}} km
+                      </p>
+                      <p
+                        style="
+                          margin: 0 0 8px 0;
+                          color: #4a5568;
+                          font-size: 14px;
+                        "
+                      >
+                        <strong style="color: #042f40">Duration:</strong>
+                        {{duration}} mins
+                      </p>
+                      <p
+                        style="
+                          margin: 0 0 16px 0;
+                          color: #4a5568;
+                          font-size: 14px;
+                          padding-bottom: 16px;
+                          border-bottom: 1px solid #042f40;
+                        "
+                      >
+                        <strong style="color: #042f40">Payment Method:</strong>
+                        {{paymentMethod}}
+                      </p>
+                      <p
+                        style="
+                          margin: 0;
+                          color: #042f40;
+                          font-size: 18px;
+                          font-weight: 700;
+                        "
+                      >
+                        Total Fare: ₦{{totalFare}}
+                      </p>
+                    </td>
+                  </tr>
+                </table>
+
+                <table
+                  cellpadding="0"
+                  cellspacing="0"
+                  border="0"
+                  width="100%"
+                  style="
+                    background-color: #042f40;
+                    border-radius: 10px;
+                    margin: 30px 0;
+                  "
+                >
+                  <tr>
+                    <td style="padding: 24px">
+                      <p
+                        style="
+                          margin: 0 0 10px 0;
+                          color: #f0f1f3;
+                          font-size: 16px;
+                          font-weight: 700;
+                        "
+                      >
+                        ⭐ Rate Your Driver
+                      </p>
+                      <p
+                        style="
+                          margin: 0;
+                          color: #f0f1f3;
+                          font-size: 14px;
+                          line-height: 1.6;
+                          opacity: 0.95;
+                        "
+                      >
+                        Help us improve by rating your experience. Open the
+                        UniRide app to leave a rating and review for your
+                        driver.
+                      </p>
+                    </td>
+                  </tr>
+                </table>
+              </td>
+            </tr>
+
+            <tr>
+              <td
+                style="
+                  background-color: #f0f1f3;
+                  padding: 35px 40px;
+                  text-align: center;
+                  border-top: 2px solid #042f40;
+                "
+              >
+                <p
+                  style="
+                    margin: 0 0 8px 0;
+                    color: #042f40;
+                    font-size: 18px;
+                    font-weight: 700;
+                  "
+                >
+                  UniRide
+                </p>
+                <p style="margin: 0 0 12px 0; color: #6c757d; font-size: 13px">
+                  Campus Ride-Hailing Made Easy
+                </p>
+                <p style="margin: 0; color: #adb5bd; font-size: 12px">
+                  © {{currentYear}} UniRide. All rights reserved.
+                </p>
+              </td>
+            </tr>
+          </table>
+        </td>
+      </tr>
+    </table>
+  </body>
+</html>

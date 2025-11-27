@@ -1,131 +1,81 @@
-const appConfig = require('../config/appConfig');
-const logger = require('../config/logger');
+const FarePolicy = require("../models/FarePolicy");
 
 /**
- * Calculate fare based on current fare policy
- * @param {object} options - Fare calculation options
- * @param {string} options.mode - Fare mode: 'admin', 'driver', 'distance_auto'
- * @param {number} options.distanceMeters - Distance in meters (for distance_auto mode)
- * @param {number} options.driverFare - Driver-set fare (for driver mode)
- * @param {number} options.adminFare - Admin-set fare (for admin mode)
- * @returns {object} - { fare, source }
+ * Calculate fare based on distance and duration
+ * @param {Number} distanceMeters Distance in meters
+ * @param {Number} durationSeconds Duration in seconds
+ * @param {String} fareMode Optional fare mode override
+ * @returns {Number} Calculated fare
  */
-const calculateFare = (options = {}) => {
-  const {
-    mode = appConfig.farePolicy.mode,
-    distanceMeters = 0,
-    driverFare = null,
-    adminFare = null,
-  } = options;
-
-  let fare = 0;
-  let source = mode;
-
+const calculateFare = async (
+  distanceMeters,
+  durationSeconds,
+  fareMode = null
+) => {
   try {
-    switch (mode) {
-      case 'admin':
-        // Use admin-provided fare or default
-        fare = adminFare || appConfig.farePolicy.defaultFare;
-        source = 'admin';
-        break;
+    // Get current fare policy
+    let farePolicy = await FarePolicy.findOne().sort({ updatedAt: -1 });
 
-      case 'driver':
-        // Use driver-provided fare or default
-        fare = driverFare || appConfig.farePolicy.defaultFare;
-        source = 'driver';
-        break;
-
-      case 'distance_auto':
-        // Calculate based on distance
-        if (distanceMeters > 0) {
-          fare = appConfig.farePolicy.baseFee + (distanceMeters * appConfig.farePolicy.perMeterRate);
-          fare = Math.round(fare); // Round to nearest whole number
-        } else {
-          fare = appConfig.farePolicy.defaultFare;
-        }
-        source = 'distance_auto';
-        break;
-
-      default:
-        logger.warn(`Unknown fare mode: ${mode}. Using default fare.`);
-        fare = appConfig.farePolicy.defaultFare;
-        source = 'admin';
+    // Create default if none exists
+    if (!farePolicy) {
+      farePolicy = await FarePolicy.create({
+        mode: "admin",
+        base_fare: 500,
+        per_km_rate: 50,
+        per_minute_rate: 10,
+        minimum_fare: 200,
+      });
     }
 
-    // Ensure fare is not negative
-    if (fare < 0) {
-      fare = appConfig.farePolicy.defaultFare;
+    const mode = fareMode || farePolicy.mode;
+
+    // If driver mode is enabled and fareMode is 'driver', return null
+    // (driver will set their own fare)
+    if (mode === "driver") {
+      return null;
     }
 
-    return {
-      fare: Math.round(fare),
-      source,
-    };
+    // Calculate fare based on distance and time
+    const distanceKm = distanceMeters / 1000;
+    const durationMinutes = durationSeconds / 60;
+
+    let calculatedFare = farePolicy.base_fare;
+    calculatedFare += distanceKm * farePolicy.per_km_rate;
+    calculatedFare += durationMinutes * farePolicy.per_minute_rate;
+
+    // Apply minimum fare
+    calculatedFare = Math.max(calculatedFare, farePolicy.minimum_fare);
+
+    // Round to nearest whole number
+    return Math.round(calculatedFare);
   } catch (error) {
-    logger.error(`Error calculating fare: ${error.message}`);
-    return {
-      fare: appConfig.farePolicy.defaultFare,
-      source: 'admin',
-    };
+    console.error("Fare calculation error:", error.message);
+    // Return default minimum fare on error
+    return 200;
   }
 };
 
 /**
- * Calculate fare based on distance only
- * @param {number} distanceMeters - Distance in meters
- * @returns {number} - Calculated fare
+ * Get current fare policy
+ * @returns {Object} Current fare policy
  */
-const calculateDistanceBasedFare = (distanceMeters) => {
-  if (!distanceMeters || distanceMeters <= 0) {
-    return appConfig.farePolicy.defaultFare;
+const getCurrentFarePolicy = async () => {
+  let farePolicy = await FarePolicy.findOne().sort({ updatedAt: -1 });
+
+  if (!farePolicy) {
+    farePolicy = await FarePolicy.create({
+      mode: "admin",
+      base_fare: 500,
+      per_km_rate: 50,
+      per_minute_rate: 10,
+      minimum_fare: 200,
+    });
   }
 
-  const fare = appConfig.farePolicy.baseFee + (distanceMeters * appConfig.farePolicy.perMeterRate);
-  return Math.round(fare);
-};
-
-/**
- * Get fare policy configuration
- * @returns {object} - Current fare policy
- */
-const getFarePolicy = () => {
-  return {
-    mode: appConfig.farePolicy.mode,
-    baseFee: appConfig.farePolicy.baseFee,
-    perMeterRate: appConfig.farePolicy.perMeterRate,
-    defaultFare: appConfig.farePolicy.defaultFare,
-  };
-};
-
-/**
- * Validate fare amount
- * @param {number} fare - Fare to validate
- * @returns {boolean}
- */
-const validateFare = (fare) => {
-  if (typeof fare !== 'number' || isNaN(fare)) {
-    return false;
-  }
-  if (fare < 0) {
-    return false;
-  }
-  return true;
-};
-
-/**
- * Format fare for display (e.g., add currency symbol)
- * @param {number} fare - Fare amount
- * @param {string} currency - Currency symbol (default: ₦)
- * @returns {string}
- */
-const formatFare = (fare, currency = '₦') => {
-  return `${currency}${fare.toFixed(2)}`;
+  return farePolicy;
 };
 
 module.exports = {
   calculateFare,
-  calculateDistanceBasedFare,
-  getFarePolicy,
-  validateFare,
-  formatFare,
+  getCurrentFarePolicy,
 };
