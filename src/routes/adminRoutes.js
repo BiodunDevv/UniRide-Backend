@@ -7,15 +7,23 @@ const {
   deleteAdmin,
   getPendingApplications,
   getAllApplications,
+  getApplicationDetails,
   approveDriver,
   rejectDriver,
   getAllDrivers,
+  getDriverById,
   deleteDriver,
   getAllUsers,
   deleteUser,
   getFarePolicy,
   updateFarePolicy,
   flagUser,
+  getNotifications,
+  markNotificationRead,
+  markAllNotificationsRead,
+  deleteNotification,
+  clearAllNotifications,
+  getDashboard,
 } = require("../controllers/adminController");
 const { protect } = require("../middlewares/authMiddleware");
 const authorize = require("../middlewares/roleMiddleware");
@@ -33,6 +41,14 @@ router.get("/list", protect, authorize("super_admin"), getAllAdmins);
 router.patch("/update/:id", protect, authorize("super_admin"), updateAdmin);
 router.delete("/delete/:id", protect, authorize("super_admin"), deleteAdmin);
 
+// Dashboard - Admin and super admin
+router.get(
+  "/dashboard",
+  protect,
+  authorize("admin", "super_admin"),
+  getDashboard
+);
+
 // Admin and super admin routes
 router.get(
   "/drivers/pending",
@@ -45,6 +61,12 @@ router.get(
   protect,
   authorize("admin", "super_admin"),
   getAllApplications
+);
+router.get(
+  "/drivers/application/:id",
+  protect,
+  authorize("admin", "super_admin"),
+  getApplicationDetails
 );
 router.patch(
   "/drivers/approve/:id",
@@ -63,6 +85,12 @@ router.get(
   protect,
   authorize("admin", "super_admin"),
   getAllDrivers
+);
+router.get(
+  "/drivers/:id",
+  protect,
+  authorize("admin", "super_admin"),
+  getDriverById
 );
 router.delete(
   "/drivers/delete/:id",
@@ -98,6 +126,38 @@ router.patch(
   protect,
   authorize("admin", "super_admin"),
   flagUser
+);
+
+// Notifications
+router.get(
+  "/notifications",
+  protect,
+  authorize("admin", "super_admin"),
+  getNotifications
+);
+router.patch(
+  "/notifications/:id/read",
+  protect,
+  authorize("admin", "super_admin"),
+  markNotificationRead
+);
+router.patch(
+  "/notifications/mark-all-read",
+  protect,
+  authorize("admin", "super_admin"),
+  markAllNotificationsRead
+);
+router.delete(
+  "/notifications/:id",
+  protect,
+  authorize("admin", "super_admin"),
+  deleteNotification
+);
+router.delete(
+  "/notifications/clear-all",
+  protect,
+  authorize("admin", "super_admin"),
+  clearAllNotifications
 );
 
 module.exports = router;

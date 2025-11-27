@@ -4,6 +4,7 @@ const app = require("./app");
 const connectDB = require("./config/db");
 const { connectRedis } = require("./config/redis");
 const { setSocketIO } = require("./services/notificationService");
+const { setIO } = require("./utils/socketManager");
 const { initializeSupportSocket } = require("./socket/supportSocket");
 const User = require("./models/User");
 
@@ -23,6 +24,9 @@ const io = require("socket.io")(server, {
 
 // Set Socket.io instance in notification service
 setSocketIO(io);
+
+// Set Socket.io instance in socket manager
+setIO(io);
 
 // Initialize support socket namespace
 initializeSupportSocket(io);

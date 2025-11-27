@@ -18,7 +18,10 @@ const { apiLimiter } = require("../middlewares/rateLimit");
  *   description: Driver management endpoints
  */
 
-router.post("/apply", protect, apiLimiter, applyAsDriver);
+// Public route - no authentication required
+router.post("/apply", apiLimiter, applyAsDriver);
+
+// Protected routes - authentication required
 router.get("/status", protect, getApplicationStatus);
 router.get("/profile", protect, authorize("driver"), getDriverProfile);
 router.patch("/profile", protect, authorize("driver"), updateDriverProfile);

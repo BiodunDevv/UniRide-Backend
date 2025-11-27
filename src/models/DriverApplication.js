@@ -20,6 +20,7 @@ const mongoose = require("mongoose");
  *           type: string
  *         drivers_license:
  *           type: string
+ *           description: URL to uploaded driver's license image
  *         phone:
  *           type: string
  *         status:
@@ -42,8 +43,18 @@ const driverApplicationSchema = new mongoose.Schema(
     user_id: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "User",
-      required: true,
-      unique: true,
+      required: false, // Optional - will be linked when approved
+    },
+    name: {
+      type: String,
+      required: [true, "Name is required"],
+      trim: true,
+    },
+    email: {
+      type: String,
+      required: [true, "Email is required"],
+      lowercase: true,
+      trim: true,
     },
     vehicle_model: {
       type: String,
@@ -57,8 +68,15 @@ const driverApplicationSchema = new mongoose.Schema(
       trim: true,
     },
     drivers_license: {
-      type: String, // URL from frontend/cloudinary
-      required: [true, "Driver license is required"],
+      type: String, // URL from frontend/cloudinary (image upload)
+      required: [true, "Driver's license image URL is required"],
+      validate: {
+        validator: function (v) {
+          // Basic URL validation
+          return /^https?:\/\/.+/.test(v);
+        },
+        message: "Driver's license must be a valid URL to the uploaded image",
+      },
     },
     phone: {
       type: String,
@@ -99,6 +117,9 @@ const driverApplicationSchema = new mongoose.Schema(
 
 // Index for quick status queries
 driverApplicationSchema.index({ status: 1, submitted_at: -1 });
+
+// Index on email to prevent duplicate applications (unique per email)
+driverApplicationSchema.index({ email: 1 }, { unique: true });
 
 const DriverApplication = mongoose.model(
   "DriverApplication",

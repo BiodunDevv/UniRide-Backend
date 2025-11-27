@@ -1,5 +1,7 @@
 const SupportTicket = require("../models/SupportTicket");
 const User = require("../models/User");
+const AdminNotification = require("../models/AdminNotification");
+const { getIO } = require("../utils/socketManager");
 
 /**
  * @swagger
@@ -62,6 +64,31 @@ const createTicket = async (req, res, next) => {
     const populatedTicket = await SupportTicket.findById(ticket._id)
       .populate("user_id", "name email role")
       .populate("messages.sender_id", "name role");
+
+    // Create notification for admins about new support ticket
+    try {
+      await AdminNotification.create({
+        type: "support_ticket",
+        title: "New Support Ticket",
+        message: `${req.user.name} created a new ${
+          priority || "medium"
+        } priority support ticket: ${subject}`,
+        reference_id: ticket._id,
+        reference_model: "SupportTicket",
+        priority: priority || "medium",
+        metadata: {
+          ticket_subject: subject,
+          ticket_category: category,
+          ticket_priority: priority || "medium",
+          user_name: req.user.name,
+          user_email: req.user.email,
+          user_role: req.user.role,
+          action: "ticket_created",
+        },
+      });
+    } catch (notificationError) {
+      console.error("Error creating notification:", notificationError.message);
+    }
 
     res.status(201).json({
       success: true,
@@ -314,6 +341,28 @@ const resolveTicket = async (req, res, next) => {
       .populate("assigned_to", "name email")
       .populate("messages.sender_id", "name role");
 
+    // Create notification for admins about ticket resolution
+    try {
+      await AdminNotification.create({
+        type: "support_ticket",
+        title: "Support Ticket Resolved",
+        message: `${req.user.name} resolved support ticket: ${updatedTicket.subject}`,
+        reference_id: ticket._id,
+        reference_model: "SupportTicket",
+        priority: "low",
+        metadata: {
+          ticket_subject: updatedTicket.subject,
+          ticket_category: updatedTicket.category,
+          resolved_by: req.user.name,
+          resolved_by_id: req.user._id,
+          user_name: updatedTicket.user_id.name,
+          action: "ticket_resolved",
+        },
+      });
+    } catch (notificationError) {
+      console.error("Error creating notification:", notificationError.message);
+    }
+
     res.status(200).json({
       success: true,
       message: "Ticket marked as resolved",
@@ -400,6 +449,31 @@ const closeTicket = async (req, res, next) => {
       .populate("assigned_to", "name email")
       .populate("messages.sender_id", "name role");
 
+    // Create notification for admins about ticket closure
+    try {
+      await AdminNotification.create({
+        type: "support_ticket",
+        title: "Support Ticket Closed",
+        message: `${updatedTicket.user_id.name} closed their support ticket: ${
+          updatedTicket.subject
+        }${satisfaction_rating ? ` (Rating: ${satisfaction_rating}/5)` : ""}`,
+        reference_id: ticket._id,
+        reference_model: "SupportTicket",
+        priority: "low",
+        metadata: {
+          ticket_subject: updatedTicket.subject,
+          ticket_category: updatedTicket.category,
+          closed_by: updatedTicket.user_id.name,
+          closed_by_id: updatedTicket.user_id._id,
+          satisfaction_rating: satisfaction_rating || null,
+          satisfaction_comment: satisfaction_comment || null,
+          action: "ticket_closed",
+        },
+      });
+    } catch (notificationError) {
+      console.error("Error creating notification:", notificationError.message);
+    }
+
     res.status(200).json({
       success: true,
       message: "Ticket closed successfully. Thank you for your feedback!",
@@ -465,9 +539,59 @@ const getAllTickets = async (req, res, next) => {
 
 /**
  * @swagger
- * /api/support/admin/tickets/{id}/assign:
+ * /api/support/admin/tickets/available:
+ *   get:
+ *     summary: Get available tickets (open, not assigned) for admins to accept
+ *     tags: [Support]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: query
+ *         name: priority
+ *         schema:
+ *           type: string
+ *           enum: [low, medium, high, urgent]
+ *       - in: query
+ *         name: category
+ *         schema:
+ *           type: string
+ *           enum: [account, payment, ride, technical, other]
+ *     responses:
+ *       200:
+ *         description: Available tickets retrieved successfully
+ */
+const getAvailableTickets = async (req, res, next) => {
+  try {
+    const { priority, category } = req.query;
+
+    const filter = {
+      status: "open",
+      assigned_to: null,
+    };
+
+    if (priority) filter.priority = priority;
+    if (category) filter.category = category;
+
+    const tickets = await SupportTicket.find(filter)
+      .populate("user_id", "name email role")
+      .populate("messages.sender_id", "name role")
+      .sort({ priority: -1, createdAt: -1 });
+
+    res.status(200).json({
+      success: true,
+      count: tickets.length,
+      data: tickets,
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * @swagger
+ * /api/support/admin/tickets/{id}/accept:
  *   patch:
- *     summary: Assign a ticket to a support staff (Admin only)
+ *     summary: Accept a ticket (admin self-assigns)
  *     tags: [Support]
  *     security:
  *       - bearerAuth: []
@@ -477,40 +601,13 @@ const getAllTickets = async (req, res, next) => {
  *         required: true
  *         schema:
  *           type: string
- *     requestBody:
- *       required: true
- *       content:
- *         application/json:
- *           schema:
- *             type: object
- *             required:
- *               - admin_id
- *             properties:
- *               admin_id:
- *                 type: string
  *     responses:
  *       200:
- *         description: Ticket assigned successfully
+ *         description: Ticket accepted successfully
  */
-const assignTicket = async (req, res, next) => {
+const acceptTicket = async (req, res, next) => {
   try {
     const { id } = req.params;
-    const { admin_id } = req.body;
-
-    if (!admin_id) {
-      return res.status(400).json({
-        success: false,
-        message: "Admin ID is required",
-      });
-    }
-
-    const admin = await User.findById(admin_id);
-    if (!admin || !["admin", "super_admin"].includes(admin.role)) {
-      return res.status(400).json({
-        success: false,
-        message: "Invalid admin ID",
-      });
-    }
 
     const ticket = await SupportTicket.findById(id);
 
@@ -521,7 +618,27 @@ const assignTicket = async (req, res, next) => {
       });
     }
 
-    ticket.assigned_to = admin_id;
+    // Check if ticket is already assigned
+    if (ticket.assigned_to) {
+      return res.status(400).json({
+        success: false,
+        message: "Ticket is already being handled by another admin",
+        assigned_to: await User.findById(ticket.assigned_to).select(
+          "name email"
+        ),
+      });
+    }
+
+    // Check if ticket is already closed
+    if (ticket.status === "closed") {
+      return res.status(400).json({
+        success: false,
+        message: "Cannot accept a closed ticket",
+      });
+    }
+
+    // Admin accepts the ticket (self-assign)
+    ticket.assigned_to = req.user._id;
     ticket.status = "in_progress";
     await ticket.save();
 
@@ -530,9 +647,167 @@ const assignTicket = async (req, res, next) => {
       .populate("assigned_to", "name email")
       .populate("messages.sender_id", "name role");
 
+    // Emit socket event to notify about ticket acceptance
+    try {
+      const io = getIO();
+      const supportNamespace = io.of("/support");
+
+      // Notify the ticket room
+      supportNamespace.to(`ticket_${id}`).emit("ticket_accepted", {
+        ticketId: id,
+        admin: {
+          id: req.user._id,
+          name: req.user.name,
+          email: req.user.email,
+        },
+        status: "in_progress",
+      });
+
+      // Notify all admins about ticket assignment (updates available list)
+      supportNamespace.emit("ticket_status_changed", {
+        ticketId: id,
+        status: "in_progress",
+        assigned_to: req.user._id,
+      });
+    } catch (socketError) {
+      console.error("Error emitting socket event:", socketError);
+      // Continue even if socket notification fails
+    }
+
+    // Create notification for other admins about ticket acceptance
+    try {
+      await AdminNotification.create({
+        type: "support_ticket",
+        title: "Support Ticket Accepted",
+        message: `${req.user.name} accepted support ticket: ${updatedTicket.subject}`,
+        reference_id: ticket._id,
+        reference_model: "SupportTicket",
+        priority: ticket.priority,
+        metadata: {
+          ticket_subject: updatedTicket.subject,
+          ticket_category: updatedTicket.category,
+          assigned_to: req.user.name,
+          assigned_to_id: req.user._id,
+          user_name: updatedTicket.user_id.name,
+          action: "ticket_accepted",
+        },
+      });
+    } catch (notificationError) {
+      console.error("Error creating notification:", notificationError.message);
+    }
+
     res.status(200).json({
       success: true,
-      message: "Ticket assigned successfully",
+      message: "Ticket accepted successfully. You can now assist this user.",
+      data: updatedTicket,
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * @swagger
+ * /api/support/admin/tickets/{id}/decline:
+ *   patch:
+ *     summary: Decline a ticket (unassign and make available for others)
+ *     tags: [Support]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: string
+ *     responses:
+ *       200:
+ *         description: Ticket declined successfully
+ */
+const declineTicket = async (req, res, next) => {
+  try {
+    const { id } = req.params;
+
+    const ticket = await SupportTicket.findById(id);
+
+    if (!ticket) {
+      return res.status(404).json({
+        success: false,
+        message: "Ticket not found",
+      });
+    }
+
+    // Only the assigned admin can decline their own ticket
+    if (
+      !ticket.assigned_to ||
+      ticket.assigned_to.toString() !== req.user._id.toString()
+    ) {
+      return res.status(403).json({
+        success: false,
+        message: "You can only decline tickets assigned to you",
+      });
+    }
+
+    // Unassign and reopen the ticket
+    ticket.assigned_to = null;
+    ticket.status = "open";
+    await ticket.save();
+
+    const updatedTicket = await SupportTicket.findById(id)
+      .populate("user_id", "name email role")
+      .populate("messages.sender_id", "name role");
+
+    // Emit socket event to notify about ticket decline
+    try {
+      const io = getIO();
+      const supportNamespace = io.of("/support");
+
+      // Notify the ticket room
+      supportNamespace.to(`ticket_${id}`).emit("ticket_declined", {
+        ticketId: id,
+        admin: {
+          id: req.user._id,
+          name: req.user.name,
+        },
+        status: "open",
+      });
+
+      // Notify all admins that ticket is available again
+      supportNamespace.emit("ticket_status_changed", {
+        ticketId: id,
+        status: "open",
+        assigned_to: null,
+      });
+    } catch (socketError) {
+      console.error("Error emitting socket event:", socketError);
+      // Continue even if socket notification fails
+    }
+
+    // Create notification for other admins about ticket decline
+    try {
+      await AdminNotification.create({
+        type: "support_ticket",
+        title: "Support Ticket Declined",
+        message: `${req.user.name} declined support ticket: ${updatedTicket.subject} - Now available for assignment`,
+        reference_id: ticket._id,
+        reference_model: "SupportTicket",
+        priority: ticket.priority,
+        metadata: {
+          ticket_subject: updatedTicket.subject,
+          ticket_category: updatedTicket.category,
+          declined_by: req.user.name,
+          declined_by_id: req.user._id,
+          user_name: updatedTicket.user_id.name,
+          action: "ticket_declined",
+        },
+      });
+    } catch (notificationError) {
+      console.error("Error creating notification:", notificationError.message);
+    }
+
+    res.status(200).json({
+      success: true,
+      message: "Ticket declined and made available for other admins",
       data: updatedTicket,
     });
   } catch (error) {
@@ -591,6 +866,7 @@ const updatePriority = async (req, res, next) => {
       });
     }
 
+    const previousPriority = ticket.priority;
     ticket.priority = priority;
     await ticket.save();
 
@@ -598,6 +874,30 @@ const updatePriority = async (req, res, next) => {
       .populate("user_id", "name email role")
       .populate("assigned_to", "name email")
       .populate("messages.sender_id", "name role");
+
+    // Create notification for admins about priority change
+    try {
+      await AdminNotification.create({
+        type: "support_ticket",
+        title: "Ticket Priority Updated",
+        message: `${req.user.name} changed ticket priority from ${previousPriority} to ${priority}: ${updatedTicket.subject}`,
+        reference_id: ticket._id,
+        reference_model: "SupportTicket",
+        priority: priority,
+        metadata: {
+          ticket_subject: updatedTicket.subject,
+          ticket_category: updatedTicket.category,
+          previous_priority: previousPriority,
+          new_priority: priority,
+          updated_by: req.user.name,
+          updated_by_id: req.user._id,
+          user_name: updatedTicket.user_id.name,
+          action: "ticket_priority_updated",
+        },
+      });
+    } catch (notificationError) {
+      console.error("Error creating notification:", notificationError.message);
+    }
 
     res.status(200).json({
       success: true,
@@ -617,6 +917,8 @@ module.exports = {
   resolveTicket,
   closeTicket,
   getAllTickets,
-  assignTicket,
+  getAvailableTickets,
+  acceptTicket,
+  declineTicket,
   updatePriority,
 };

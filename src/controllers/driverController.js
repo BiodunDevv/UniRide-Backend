@@ -1,6 +1,7 @@
 const Driver = require("../models/Driver");
 const DriverApplication = require("../models/DriverApplication");
 const User = require("../models/User");
+const AdminNotification = require("../models/AdminNotification");
 const {
   sendDriverApplicationReceivedEmail,
 } = require("../services/emailService");
@@ -9,10 +10,8 @@ const {
  * @swagger
  * /api/driver/apply:
  *   post:
- *     summary: Submit driver application
+ *     summary: Submit driver application (Public - No authentication required)
  *     tags: [Driver]
- *     security:
- *       - bearerAuth: []
  *     requestBody:
  *       required: true
  *       content:
@@ -20,21 +19,35 @@ const {
  *           schema:
  *             type: object
  *             required:
+ *               - name
+ *               - email
+ *               - phone
  *               - vehicle_model
  *               - plate_number
  *               - drivers_license
- *               - phone
  *             properties:
- *               vehicle_model:
+ *               name:
  *                 type: string
- *               plate_number:
+ *                 description: Full name of applicant
+ *               email:
  *                 type: string
- *               drivers_license:
- *                 type: string
+ *                 description: Email address
  *               phone:
  *                 type: string
+ *                 description: Phone number
+ *               vehicle_model:
+ *                 type: string
+ *                 description: Vehicle make and model
+ *               plate_number:
+ *                 type: string
+ *                 description: Vehicle plate number
+ *               drivers_license:
+ *                 type: string
+ *                 description: Driver's license image URL (upload image to Cloudinary or cloud storage first, then submit the URL)
+ *                 example: https://res.cloudinary.com/example/image/upload/v1234567890/license.jpg
  *               available_seats:
  *                 type: number
+ *                 description: Number of available seats (default 4)
  *     responses:
  *       201:
  *         description: Application submitted successfully
@@ -42,55 +55,104 @@ const {
 const applyAsDriver = async (req, res, next) => {
   try {
     const {
+      name,
+      email,
+      phone,
       vehicle_model,
       plate_number,
       drivers_license,
-      phone,
       available_seats,
     } = req.body;
 
-    // Check if user already has a pending or approved application
+    // Validate required fields
+    if (
+      !name ||
+      !email ||
+      !phone ||
+      !vehicle_model ||
+      !plate_number ||
+      !drivers_license
+    ) {
+      return res.status(400).json({
+        success: false,
+        message:
+          "All fields are required: name, email, phone, vehicle_model, plate_number, drivers_license",
+      });
+    }
+
+    // Validate email format
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(email)) {
+      return res.status(400).json({
+        success: false,
+        message: "Please provide a valid email address",
+      });
+    }
+
+    // Check if email already has a pending or approved application
     const existingApplication = await DriverApplication.findOne({
-      user_id: req.user._id,
+      email: email.toLowerCase(),
       status: { $in: ["pending", "approved"] },
     });
 
     if (existingApplication) {
       return res.status(400).json({
         success: false,
-        message: `You already have a ${existingApplication.status} application`,
+        message: `An application with this email already exists with status: ${existingApplication.status}`,
       });
     }
 
-    // Check if user is already a driver
-    const existingDriver = await Driver.findOne({ user_id: req.user._id });
-    if (existingDriver) {
+    // Check if email is already registered as a driver
+    const existingUser = await User.findOne({ email: email.toLowerCase() });
+    if (existingUser && existingUser.role === "driver") {
       return res.status(400).json({
         success: false,
-        message: "You are already registered as a driver",
+        message: "This email is already registered as a driver",
       });
     }
 
-    // Create application
+    // Create application (without user_id since they haven't registered yet)
     const application = await DriverApplication.create({
-      user_id: req.user._id,
-      vehicle_model,
-      plate_number: plate_number.toUpperCase(),
-      drivers_license,
-      phone,
+      name: name.trim(),
+      email: email.toLowerCase().trim(),
+      phone: phone.trim(),
+      vehicle_model: vehicle_model.trim(),
+      plate_number: plate_number.toUpperCase().trim(),
+      drivers_license: drivers_license.trim(),
       available_seats: available_seats || 4,
     });
 
     // Send application received email
     try {
       await sendDriverApplicationReceivedEmail({
-        name: req.user.name,
-        email: req.user.email,
+        name: application.name,
+        email: application.email,
         applicationId: application._id,
       });
     } catch (emailError) {
       console.error("Error sending application email:", emailError.message);
       // Continue even if email fails
+    }
+
+    // Create admin notification
+    try {
+      await AdminNotification.create({
+        type: "driver_application",
+        title: "New Driver Application",
+        message: `${application.name} has submitted a driver application`,
+        reference_id: application._id,
+        reference_model: "DriverApplication",
+        priority: "medium",
+        metadata: {
+          applicant_name: application.name,
+          applicant_email: application.email,
+          vehicle_model: application.vehicle_model,
+          plate_number: application.plate_number,
+        },
+      });
+    } catch (notificationError) {
+      console.error("Error creating notification:", notificationError.message);
+      // Continue even if notification fails
     }
 
     res.status(201).json({

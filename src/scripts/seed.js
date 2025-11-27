@@ -16,26 +16,23 @@ const seedDatabase = async () => {
     await mongoose.connect(process.env.MONGODB_URI);
     console.log("✅ MongoDB Connected for seeding");
 
-    // Clear ALL existing data
-    console.log("🗑️  Clearing all existing data...");
+    // Drop the entire database to ensure clean slate
+    console.log("🗑️  Dropping entire database for clean slate...");
+    await mongoose.connection.dropDatabase();
+    console.log("  ✅ Database dropped successfully");
 
-    await Booking.deleteMany({});
-    console.log("  ✅ Cleared Bookings");
+    // Drop and recreate indexes to remove old user_id unique index
+    console.log("\n🔧 Recreating collections with proper indexes...");
 
-    await Ride.deleteMany({});
-    console.log("  ✅ Cleared Rides");
+    // This will recreate collections with current schema indexes
+    await User.createCollection().catch(() => {});
+    await Driver.createCollection().catch(() => {});
+    await DriverApplication.createCollection().catch(() => {});
+    await Ride.createCollection().catch(() => {});
+    await Booking.createCollection().catch(() => {});
+    await FarePolicy.createCollection().catch(() => {});
 
-    await Driver.deleteMany({});
-    console.log("  ✅ Cleared Drivers");
-
-    await DriverApplication.deleteMany({});
-    console.log("  ✅ Cleared Driver Applications");
-
-    await FarePolicy.deleteMany({});
-    console.log("  ✅ Cleared Fare Policies");
-
-    await User.deleteMany({});
-    console.log("  ✅ Cleared Users");
+    console.log("  ✅ Collections recreated with fresh indexes");
 
     // 1. Create Super Admin from .env
     console.log("👑 Creating Super Admin...");
@@ -129,71 +126,64 @@ const seedDatabase = async () => {
       console.log(`✅ Admin created: ${admin.email}`);
     }
 
-    // 4. Create Test Driver Applications
+    // 4. Create Test Driver Applications (using new public application format)
     console.log("\n🚗 Creating Test Driver Applications...");
     const testDriverApplications = [
       {
         name: "David Driver",
         email: "david.driver@test.uniride.com",
-        password: "password123",
         phone: "+1234567890",
         vehicle_model: "Toyota Camry 2020",
         plate_number: "ABC-1234",
         drivers_license: "https://example.com/license/david.jpg",
+        available_seats: 4,
       },
       {
         name: "Emma Driver",
         email: "emma.driver@test.uniride.com",
-        password: "password123",
         phone: "+1234567891",
         vehicle_model: "Honda Accord 2021",
         plate_number: "XYZ-5678",
         drivers_license: "https://example.com/license/emma.jpg",
+        available_seats: 3,
       },
       {
         name: "Robert Rider",
         email: "robert.rider@test.uniride.com",
-        password: "password123",
         phone: "+1234567892",
         vehicle_model: "Tesla Model 3 2022",
         plate_number: "TES-9012",
         drivers_license: "https://example.com/license/robert.jpg",
+        available_seats: 4,
       },
     ];
 
     for (const driverData of testDriverApplications) {
-      // Create user account for driver
-      const driverUser = await User.create({
+      // Create driver application (no user_id needed - public application)
+      const application = await DriverApplication.create({
         name: driverData.name,
         email: driverData.email,
-        password: driverData.password,
-        role: "user",
-        email_verified: true,
-      });
-
-      // Create driver application
-      const application = await DriverApplication.create({
-        user_id: driverUser._id,
         phone: driverData.phone,
         vehicle_model: driverData.vehicle_model,
         plate_number: driverData.plate_number,
         drivers_license: driverData.drivers_license,
+        available_seats: driverData.available_seats,
         status: "pending",
       });
 
-      console.log(`✅ Driver application created: ${driverUser.email}`);
+      console.log(`✅ Driver application created: ${driverData.email}`);
 
       // Send application received email
       try {
         await sendDriverApplicationReceivedEmail({
-          name: driverUser.name,
-          email: driverUser.email,
+          name: application.name,
+          email: application.email,
           applicationId: application._id,
         });
-        console.log(`📧 Application email sent to: ${driverUser.email}`);
+        console.log(`📧 Application email sent to: ${driverData.email}`);
       } catch (emailError) {
         console.error(
-          `⚠️  Failed to send email to ${driverUser.email}:`,
+          `⚠️  Failed to send email to ${driverData.email}:`,
           emailError.message
         );
       }

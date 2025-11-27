@@ -8,7 +8,9 @@ const {
   resolveTicket,
   closeTicket,
   getAllTickets,
-  assignTicket,
+  getAvailableTickets,
+  acceptTicket,
+  declineTicket,
   updatePriority,
 } = require("../controllers/supportController");
 const { protect } = require("../middlewares/authMiddleware");
@@ -36,11 +38,23 @@ router.get(
   authorize("admin", "super_admin"),
   getAllTickets
 );
-router.patch(
-  "/admin/tickets/:id/assign",
+router.get(
+  "/admin/tickets/available",
   protect,
   authorize("admin", "super_admin"),
-  assignTicket
+  getAvailableTickets
+);
+router.patch(
+  "/admin/tickets/:id/accept",
+  protect,
+  authorize("admin", "super_admin"),
+  acceptTicket
+);
+router.patch(
+  "/admin/tickets/:id/decline",
+  protect,
+  authorize("admin", "super_admin"),
+  declineTicket
 );
 router.patch(
   "/admin/tickets/:id/priority",
