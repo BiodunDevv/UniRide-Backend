@@ -1,41 +1,62 @@
-const jwt = require('jsonwebtoken');
-const User = require('../models/User');
+const jwt = require("jsonwebtoken");
+const User = require("../models/User");
 
 const protect = async (req, res, next) => {
   let token;
 
-  if (req.headers.authorization && req.headers.authorization.startsWith('Bearer')) {
+  if (
+    req.headers.authorization &&
+    req.headers.authorization.startsWith("Bearer")
+  ) {
     try {
       // Get token from header
-      token = req.headers.authorization.split(' ')[1];
+      token = req.headers.authorization.split(" ")[1];
 
       // Verify token
       const decoded = jwt.verify(token, process.env.JWT_SECRET);
 
       // Get user from token
-      req.user = await User.findById(decoded.id).select('-password');
+      req.user = await User.findById(decoded.id).select("-password");
 
       if (!req.user) {
         return res.status(401).json({
           success: false,
-          message: 'User not found',
+          message: "User not found",
         });
+      }
+
+      // Check if device is still valid (device not removed)
+      if (decoded.device_id) {
+        const deviceExists =
+          req.user.devices &&
+          req.user.devices.some((d) => d.device_id === decoded.device_id);
+
+        if (!deviceExists) {
+          return res.status(401).json({
+            success: false,
+            message: "Device session invalid. Please login again.",
+            device_removed: true,
+          });
+        }
+
+        // Store device_id in request for later use
+        req.device_id = decoded.device_id;
       }
 
       // Check if user is flagged
       if (req.user.is_flagged) {
         return res.status(403).json({
           success: false,
-          message: 'Your account has been flagged. Please contact support.',
+          message: "Your account has been flagged. Please contact support.",
         });
       }
 
       next();
     } catch (error) {
-      console.error('Auth middleware error:', error.message);
+      console.error("Auth middleware error:", error.message);
       return res.status(401).json({
         success: false,
-        message: 'Not authorized, token failed',
+        message: "Not authorized, token failed",
       });
     }
   }
@@ -43,7 +64,7 @@ const protect = async (req, res, next) => {
   if (!token) {
     return res.status(401).json({
       success: false,
-      message: 'Not authorized, no token',
+      message: "Not authorized, no token",
     });
   }
 };
@@ -52,11 +73,14 @@ const protect = async (req, res, next) => {
 const optionalAuth = async (req, res, next) => {
   let token;
 
-  if (req.headers.authorization && req.headers.authorization.startsWith('Bearer')) {
+  if (
+    req.headers.authorization &&
+    req.headers.authorization.startsWith("Bearer")
+  ) {
     try {
-      token = req.headers.authorization.split(' ')[1];
+      token = req.headers.authorization.split(" ")[1];
       const decoded = jwt.verify(token, process.env.JWT_SECRET);
-      req.user = await User.findById(decoded.id).select('-password');
+      req.user = await User.findById(decoded.id).select("-password");
     } catch (error) {
       // Continue without user
       req.user = null;

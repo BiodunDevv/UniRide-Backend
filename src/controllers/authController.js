@@ -11,8 +11,8 @@ const {
 /**
  * Generate JWT token
  */
-const generateToken = (id) => {
-  return jwt.sign({ id }, process.env.JWT_SECRET, {
+const generateToken = (id, device_id) => {
+  return jwt.sign({ id, device_id }, process.env.JWT_SECRET, {
     expiresIn: process.env.JWT_EXPIRE,
   });
 };
@@ -191,23 +191,56 @@ const login = async (req, res, next) => {
       });
     }
 
-    // Single-device restriction check
-    if (user.device_id && user.device_id !== device_id) {
-      return res.status(403).json({
-        success: false,
-        message:
-          "This account is already logged in on another device. Please logout from the other device first.",
+    // Multi-device support with restrictions
+    const MAX_DEVICES_USER = 3;
+    const isAdmin = user.role === "admin" || user.role === "super_admin";
+
+    // Initialize devices array if not exists
+    if (!user.devices) {
+      user.devices = [];
+    }
+
+    // Check if device already exists
+    const existingDeviceIndex = user.devices.findIndex(
+      (d) => d.device_id === device_id
+    );
+
+    if (existingDeviceIndex !== -1) {
+      // Update existing device
+      user.devices[existingDeviceIndex].last_login = new Date();
+      user.devices[existingDeviceIndex].ip_address =
+        req.ip || req.connection.remoteAddress;
+      user.devices[existingDeviceIndex].user_agent = req.headers["user-agent"];
+    } else {
+      // New device - check device limit for non-admin users
+      if (!isAdmin && user.devices.length >= MAX_DEVICES_USER) {
+        return res.status(403).json({
+          success: false,
+          message: `This account is already logged in on ${MAX_DEVICES_USER} devices. Please logout from another device first.`,
+          devices: user.devices.map((d) => ({
+            device_id: d.device_id,
+            device_name: d.device_name,
+            device_type: d.device_type,
+            last_login: d.last_login,
+          })),
+        });
+      }
+
+      // Add new device
+      user.devices.push({
+        device_id,
+        device_name: req.body.device_name || "Unknown Device",
+        device_type: req.body.device_type || "other",
+        last_login: new Date(),
+        ip_address: req.ip || req.connection.remoteAddress,
+        user_agent: req.headers["user-agent"],
       });
     }
 
-    // Update device_id if not set
-    if (!user.device_id) {
-      user.device_id = device_id;
-      await user.save();
-    }
+    await user.save();
 
-    // Generate token
-    const token = generateToken(user._id);
+    // Generate token with device_id
+    const token = generateToken(user._id, device_id);
 
     res.status(200).json({
       success: true,
@@ -228,7 +261,6 @@ const login = async (req, res, next) => {
     next(error);
   }
 };
-
 /**
  * @swagger
  * /api/auth/biometric:
@@ -279,16 +311,28 @@ const biometricAuth = async (req, res, next) => {
       });
     }
 
-    // Check device
-    if (user.device_id !== device_id) {
+    // Check if device exists in devices array
+    const deviceExists = user.devices.some((d) => d.device_id === device_id);
+
+    // Also check legacy device_id field for backward compatibility
+    if (!deviceExists && user.device_id !== device_id) {
       return res.status(403).json({
         success: false,
-        message: "Device mismatch. Please login with password.",
+        message: "Device not recognized. Please login with password.",
       });
     }
 
-    // Generate token
-    const token = generateToken(user._id);
+    // Update last login for the device
+    if (deviceExists) {
+      const deviceIndex = user.devices.findIndex(
+        (d) => d.device_id === device_id
+      );
+      user.devices[deviceIndex].last_login = new Date();
+      await user.save();
+    }
+
+    // Generate token with device_id
+    const token = generateToken(user._id, device_id);
 
     res.status(200).json({
       success: true,
@@ -312,20 +356,45 @@ const biometricAuth = async (req, res, next) => {
  * @swagger
  * /api/auth/logout:
  *   post:
- *     summary: Logout and free device_id
+ *     summary: Logout and remove device session
  *     tags: [Auth]
  *     security:
  *       - bearerAuth: []
+ *     requestBody:
+ *       required: false
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             properties:
+ *               device_id:
+ *                 type: string
+ *                 description: Device ID to logout (optional - will use token's device_id if not provided)
  *     responses:
  *       200:
  *         description: Logout successful
  */
 const logout = async (req, res, next) => {
   try {
+    // Get device_id from request body or from token (set by middleware)
+    const device_id = req.body.device_id || req.device_id;
     const user = await User.findById(req.user._id);
 
-    // Clear device_id
-    user.device_id = null;
+    if (!device_id) {
+      return res.status(400).json({
+        success: false,
+        message: "device_id is required",
+      });
+    }
+
+    // Remove the device from devices array
+    user.devices = user.devices.filter((d) => d.device_id !== device_id);
+
+    // Clear old device_id field for backward compatibility
+    if (user.device_id === device_id) {
+      user.device_id = null;
+    }
+
     await user.save();
 
     res.status(200).json({
@@ -535,8 +604,8 @@ const verifyEmail = async (req, res, next) => {
     user.email_verification_expires = undefined;
     await user.save();
 
-    // Generate token
-    const token = generateToken(user._id);
+    // Generate token (no device_id for email verification)
+    const token = generateToken(user._id, null);
 
     res.status(200).json({
       success: true,
@@ -774,6 +843,153 @@ const resetPassword = async (req, res, next) => {
   }
 };
 
+/**
+ * @swagger
+ * /api/auth/devices:
+ *   get:
+ *     summary: Get all devices logged in for current user
+ *     tags: [Auth]
+ *     security:
+ *       - bearerAuth: []
+ *     responses:
+ *       200:
+ *         description: List of devices
+ */
+const getDevices = async (req, res, next) => {
+  try {
+    const user = await User.findById(req.user._id);
+
+    res.status(200).json({
+      success: true,
+      data: {
+        devices: user.devices.map((d) => ({
+          device_id: d.device_id,
+          device_name: d.device_name,
+          device_type: d.device_type,
+          last_login: d.last_login,
+          ip_address: d.ip_address,
+        })),
+        max_devices:
+          user.role === "admin" || user.role === "super_admin"
+            ? "unlimited"
+            : 3,
+      },
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * @swagger
+ * /api/auth/devices/{device_id}:
+ *   delete:
+ *     summary: Remove a specific device
+ *     tags: [Auth]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: device_id
+ *         required: true
+ *         schema:
+ *           type: string
+ *     responses:
+ *       200:
+ *         description: Device removed successfully
+ */
+const removeDevice = async (req, res, next) => {
+  try {
+    const { device_id } = req.params;
+    const user = await User.findById(req.user._id);
+
+    const deviceExists = user.devices.some((d) => d.device_id === device_id);
+
+    if (!deviceExists) {
+      return res.status(404).json({
+        success: false,
+        message: "Device not found",
+      });
+    }
+
+    // Remove the device
+    user.devices = user.devices.filter((d) => d.device_id !== device_id);
+    await user.save();
+
+    res.status(200).json({
+      success: true,
+      message: "Device removed successfully",
+      data: {
+        devices: user.devices.map((d) => ({
+          device_id: d.device_id,
+          device_name: d.device_name,
+          device_type: d.device_type,
+          last_login: d.last_login,
+        })),
+      },
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * @swagger
+ * /api/auth/devices/logout-all:
+ *   post:
+ *     summary: Logout from all devices
+ *     tags: [Auth]
+ *     security:
+ *       - bearerAuth: []
+ *     requestBody:
+ *       required: false
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             properties:
+ *               except_current:
+ *                 type: boolean
+ *                 description: Keep current device logged in
+ *               current_device_id:
+ *                 type: string
+ *                 description: Current device ID to keep (if except_current is true)
+ *     responses:
+ *       200:
+ *         description: Logged out from all devices
+ */
+const logoutAllDevices = async (req, res, next) => {
+  try {
+    const { except_current, current_device_id } = req.body;
+    const user = await User.findById(req.user._id);
+
+    if (except_current && current_device_id) {
+      // Keep only the current device
+      user.devices = user.devices.filter(
+        (d) => d.device_id === current_device_id
+      );
+    } else {
+      // Remove all devices
+      user.devices = [];
+    }
+
+    user.device_id = null; // Clear legacy field
+    await user.save();
+
+    res.status(200).json({
+      success: true,
+      message: except_current
+        ? "Logged out from all other devices"
+        : "Logged out from all devices",
+      data: {
+        remaining_devices: user.devices.length,
+      },
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
 module.exports = {
   register,
   verifyEmail,
@@ -786,4 +1002,7 @@ module.exports = {
   changePassword,
   enableBiometric,
   getMe,
+  getDevices,
+  removeDevice,
+  logoutAllDevices,
 };

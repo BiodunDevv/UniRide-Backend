@@ -12,6 +12,9 @@ const {
   changePassword,
   enableBiometric,
   getMe,
+  getDevices,
+  removeDevice,
+  logoutAllDevices,
 } = require("../controllers/authController");
 const { protect } = require("../middlewares/authMiddleware");
 const { authLimiter } = require("../middlewares/rateLimit");
@@ -34,5 +37,10 @@ router.post("/logout", protect, logout);
 router.patch("/change-password", protect, changePassword);
 router.patch("/enable-biometric", protect, enableBiometric);
 router.get("/me", protect, getMe);
+
+// Device management routes
+router.get("/devices", protect, getDevices);
+router.delete("/devices/:device_id", protect, removeDevice);
+router.post("/devices/logout-all", protect, logoutAllDevices);
 
 module.exports = router;

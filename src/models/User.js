@@ -61,8 +61,35 @@ const userSchema = new mongoose.Schema(
     device_id: {
       type: String,
       unique: true,
-      sparse: true, // Allows null values while maintaining uniqueness
+      sparse: true, // Allows null values while maintaining uniqueness (deprecated - kept for backward compatibility)
     },
+    devices: [
+      {
+        device_id: {
+          type: String,
+          required: true,
+        },
+        device_name: {
+          type: String,
+          default: "Unknown Device",
+        },
+        device_type: {
+          type: String,
+          enum: ["mobile", "tablet", "desktop", "other"],
+          default: "other",
+        },
+        last_login: {
+          type: Date,
+          default: Date.now,
+        },
+        ip_address: {
+          type: String,
+        },
+        user_agent: {
+          type: String,
+        },
+      },
+    ],
     biometric_enabled: {
       type: Boolean,
       default: false,
