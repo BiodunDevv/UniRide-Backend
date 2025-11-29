@@ -35,6 +35,14 @@ UniRide is a secure campus ride-hailing platform designed for universities and c
 
 - **Email notifications** via Brevo (driver approval/rejection, booking confirmation, ride completion)
 - **Real-time push notifications** via Socket.io (ride requests, acceptance, driver arrival, ride end)
+- **Firebase Cloud Messaging** for mobile push notifications with granular user preferences
+- **Broadcast messaging** system for admins to send announcements to users, drivers, or all
+
+### User Preferences & Settings
+
+- **Notification preferences** per user (push, email, ride events, promotional messages)
+- **FCM token management** for multi-device push notification support
+- **Role-based notification settings** (users, drivers, admins have different notification types)
 
 ### API Documentation
 
@@ -48,6 +56,7 @@ UniRide is a secure campus ride-hailing platform designed for universities and c
 - Redis instance
 - Brevo API key
 - OpenRouteService API key
+- Firebase project with Cloud Messaging enabled
 
 ## 🛠️ Installation
 
@@ -91,9 +100,22 @@ DEFAULT_SUPER_ADMIN_EMAIL=admin@uniride.com
 DEFAULT_SUPER_ADMIN_PASSWORD=secure_password
 DEFAULT_SUPER_ADMIN_FIRST_NAME=Admin
 DEFAULT_SUPER_ADMIN_LAST_NAME=User
+
+# Firebase Cloud Messaging (Push Notifications)
+# Generate service account key from: Firebase Console -> Project Settings -> Service Accounts
+FIREBASE_SERVICE_ACCOUNT_KEY='{"type":"service_account","project_id":"...",...}'
 ```
 
-4. **Start the server**
+**Setting up Firebase for Push Notifications:**
+
+1. Go to [Firebase Console](https://console.firebase.google.com/)
+2. Create a new project or select existing project
+3. Navigate to **Project Settings** (gear icon) → **Service Accounts**
+4. Click **Generate New Private Key**
+5. Copy the entire JSON content
+6. Add to `.env` as a single-line string in `FIREBASE_SERVICE_ACCOUNT_KEY`
+
+7. **Start the server**
 
 Development mode:
 
@@ -143,9 +165,12 @@ http://localhost:5000/api-docs
 - `PATCH /drivers/approve/:id` - Approve driver
 - `PATCH /drivers/reject/:id` - Reject driver
 - `GET /drivers/list` - Get all approved drivers
+- `DELETE /drivers/:id` - Delete driver (also removes applications for reapplication)
 - `GET /fare-policy` - Get current fare policy
 - `PATCH /fare-policy` - Update fare policy
 - `PATCH /users/flag/:id` - Flag/unflag user
+- `POST /broadcast` - Send broadcast message to all/users/drivers/admins
+- `GET /broadcasts` - Get broadcast message history
 
 ### Rides (`/api/rides`)
 
@@ -165,6 +190,19 @@ http://localhost:5000/api-docs
 - `POST /rate` - Rate driver after completion
 - `GET /my-bookings` - Get user's bookings
 - `PATCH /cancel/:id` - Cancel booking
+
+### Device Management (`/api/auth`)
+
+- `GET /devices` - Get all logged-in devices
+- `DELETE /devices/:device_id` - Remove specific device (logs out that device)
+- `POST /logout-all` - Logout from all devices
+
+### Notification Settings (`/api/settings`)
+
+- `GET /notifications` - Get notification preferences
+- `PATCH /notifications` - Update notification preferences
+- `POST /fcm-token` - Register FCM token for push notifications
+- `DELETE /fcm-token` - Remove FCM token
 
 ## 🎯 User Flows
 

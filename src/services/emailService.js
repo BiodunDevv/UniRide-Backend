@@ -290,6 +290,55 @@ const sendAdminInvitationEmail = async (adminData) => {
   }
 };
 
+/**
+ * Send broadcast message email
+ */
+const sendBroadcastEmail = async (userData) => {
+  try {
+    const templatePath = path.join(
+      __dirname,
+      "../emails/broadcastMessage.html"
+    );
+    const template = await fs.readFile(templatePath, "utf-8");
+
+    // Determine badge text based on target audience
+    let badgeText = "Announcement";
+    if (userData.targetAudience === "all") badgeText = "General Announcement";
+    else if (userData.targetAudience === "users") badgeText = "For Users";
+    else if (userData.targetAudience === "drivers") badgeText = "For Drivers";
+    else if (userData.targetAudience === "admins") badgeText = "For Admins";
+
+    const htmlContent = processTemplate(template, {
+      recipientName: userData.name || "UniRide User",
+      recipientRole: userData.role || "user",
+      title: userData.title,
+      message: userData.message,
+      senderName: userData.senderName || "UniRide Admin",
+      sentDate: new Date().toLocaleDateString("en-US", {
+        weekday: "long",
+        year: "numeric",
+        month: "long",
+        day: "numeric",
+        hour: "2-digit",
+        minute: "2-digit",
+      }),
+      badgeText: badgeText,
+      currentYear: new Date().getFullYear(),
+    });
+
+    await sendEmail({
+      to: userData.email,
+      subject: `📢 ${userData.title} - UniRide`,
+      htmlContent,
+    });
+
+    console.log(`✅ Broadcast email sent to: ${userData.email}`);
+  } catch (error) {
+    console.error("Error sending broadcast email:", error.message);
+    throw error;
+  }
+};
+
 module.exports = {
   sendEmailVerificationCode,
   sendPasswordResetCode,
@@ -300,4 +349,5 @@ module.exports = {
   sendRideCompletionEmail,
   sendMissedRideEmail,
   sendAdminInvitationEmail,
+  sendBroadcastEmail,
 };

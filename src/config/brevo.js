@@ -28,6 +28,13 @@ const sendEmail = async ({ to, subject, htmlContent, textContent }) => {
     return result;
   } catch (error) {
     console.error("❌ Brevo Email Error:", error.message);
+    if (error.response) {
+      console.error("Response status:", error.response.status);
+      console.error(
+        "Response body:",
+        JSON.stringify(error.response.body || error.response.data, null, 2)
+      );
+    }
     throw new Error("Failed to send email");
   }
 };

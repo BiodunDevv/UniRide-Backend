@@ -1,6 +1,7 @@
 const jwt = require("jsonwebtoken");
 const bcrypt = require("bcrypt");
 const User = require("../models/User");
+const NotificationSettings = require("../models/NotificationSettings");
 const { v4: uuidv4 } = require("uuid");
 const generateVerificationCode = require("../utils/generateVerificationCode");
 const {
@@ -70,6 +71,23 @@ const register = async (req, res, next) => {
       email_verified: false,
       email_verification_code: verificationCode,
       email_verification_expires: verificationExpires,
+    });
+
+    // Create notification settings with all notifications enabled by default
+    await NotificationSettings.create({
+      user_id: user._id,
+      push_notifications_enabled: true,
+      email_notifications_enabled: true,
+      notification_preferences: {
+        ride_requests: true,
+        ride_accepted: true,
+        ride_started: true,
+        ride_completed: true,
+        driver_nearby: true,
+        payment_received: true,
+        promotional_messages: true,
+        broadcast_messages: true,
+      },
     });
 
     // Send verification email

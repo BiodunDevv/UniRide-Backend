@@ -6,6 +6,7 @@ const DriverApplication = require("../models/DriverApplication");
 const Ride = require("../models/Ride");
 const Booking = require("../models/Booking");
 const FarePolicy = require("../models/FarePolicy");
+const NotificationSettings = require("../models/NotificationSettings");
 const {
   sendDriverApplicationReceivedEmail,
 } = require("../services/emailService");
@@ -31,6 +32,7 @@ const seedDatabase = async () => {
     await Ride.createCollection().catch(() => {});
     await Booking.createCollection().catch(() => {});
     await FarePolicy.createCollection().catch(() => {});
+    await NotificationSettings.createCollection().catch(() => {});
 
     console.log("  ✅ Collections recreated with fresh indexes");
 
@@ -41,7 +43,7 @@ const seedDatabase = async () => {
     });
 
     if (!superAdmin) {
-      await User.create({
+      const newSuperAdmin = await User.create({
         name: `${process.env.DEFAULT_SUPER_ADMIN_FIRST_NAME} ${process.env.DEFAULT_SUPER_ADMIN_LAST_NAME}`,
         email: process.env.DEFAULT_SUPER_ADMIN_EMAIL,
         password: process.env.DEFAULT_SUPER_ADMIN_PASSWORD,
@@ -49,6 +51,22 @@ const seedDatabase = async () => {
         email_verified: false,
         first_login: false,
       });
+
+      // Create notification settings with all notifications enabled by default
+      await NotificationSettings.create({
+        user_id: newSuperAdmin._id,
+        push_notifications_enabled: true,
+        email_notifications_enabled: true,
+        notification_preferences: {
+          new_driver_applications: true,
+          user_flagged: true,
+          system_alerts: true,
+          user_reports: true,
+          promotional_messages: true,
+          broadcast_messages: true,
+        },
+      });
+
       console.log(
         `✅ Super Admin created: ${process.env.DEFAULT_SUPER_ADMIN_EMAIL}`
       );
@@ -62,29 +80,22 @@ const seedDatabase = async () => {
     console.log("\n👥 Creating Test Users...");
     const testUsers = [
       {
-        name: "John Doe",
-        email: "john.doe@test.uniride.com",
+        name: "Muhammed Mustapha",
+        email: "mustapha.muhammed@bowen.edu.ng",
         password: "password123",
         role: "user",
         email_verified: true,
       },
       {
-        name: "Jane Smith",
-        email: "jane.smith@test.uniride.com",
+        name: "ProfileX",
+        email: "profilex.dev@gmail.com",
         password: "password123",
         role: "user",
         email_verified: true,
       },
       {
-        name: "Mike Johnson",
-        email: "mike.johnson@test.uniride.com",
-        password: "password123",
-        role: "user",
-        email_verified: true,
-      },
-      {
-        name: "Sarah Williams",
-        email: "sarah.williams@test.uniride.com",
+        name: "G Mm",
+        email: "gmm527000@gmail.com",
         password: "password123",
         role: "user",
         email_verified: true,
@@ -95,6 +106,24 @@ const seedDatabase = async () => {
     for (const userData of testUsers) {
       const user = await User.create(userData);
       createdUsers.push(user);
+
+      // Create notification settings with all notifications enabled by default
+      await NotificationSettings.create({
+        user_id: user._id,
+        push_notifications_enabled: true,
+        email_notifications_enabled: true,
+        notification_preferences: {
+          ride_requests: true,
+          ride_accepted: true,
+          ride_started: true,
+          ride_completed: true,
+          driver_nearby: true,
+          payment_received: true,
+          promotional_messages: true,
+          broadcast_messages: true,
+        },
+      });
+
       console.log(`✅ User created: ${user.email}`);
     }
 
@@ -102,16 +131,8 @@ const seedDatabase = async () => {
     console.log("\n🔧 Creating Test Admins...");
     const testAdmins = [
       {
-        name: "Admin One",
-        email: "admin1@test.uniride.com",
-        password: "admin123",
-        role: "admin",
-        email_verified: true,
-        first_login: false,
-      },
-      {
-        name: "Admin Two",
-        email: "admin2@test.uniride.com",
+        name: "Muhammed Abiodun",
+        email: "muhammedabiodun43@gmail.com",
         password: "admin123",
         role: "admin",
         email_verified: true,
@@ -123,98 +144,42 @@ const seedDatabase = async () => {
     for (const adminData of testAdmins) {
       const admin = await User.create(adminData);
       createdAdmins.push(admin);
+
+      // Create notification settings with all notifications enabled by default
+      await NotificationSettings.create({
+        user_id: admin._id,
+        push_notifications_enabled: true,
+        email_notifications_enabled: true,
+        notification_preferences: {
+          new_driver_applications: true,
+          user_flagged: true,
+          system_alerts: true,
+          user_reports: true,
+          promotional_messages: true,
+          broadcast_messages: true,
+        },
+      });
+
       console.log(`✅ Admin created: ${admin.email}`);
     }
 
-    // 4. Create Test Driver Applications (using new public application format)
-    console.log("\n🚗 Creating Test Driver Applications...");
-    const testDriverApplications = [
-      {
-        name: "David Driver",
-        email: "david.driver@test.uniride.com",
-        phone: "+1234567890",
-        vehicle_model: "Toyota Camry 2020",
-        plate_number: "ABC-1234",
-        drivers_license: "https://example.com/license/david.jpg",
-        available_seats: 4,
-      },
-      {
-        name: "Emma Driver",
-        email: "emma.driver@test.uniride.com",
-        phone: "+1234567891",
-        vehicle_model: "Honda Accord 2021",
-        plate_number: "XYZ-5678",
-        drivers_license: "https://example.com/license/emma.jpg",
-        available_seats: 3,
-      },
-      {
-        name: "Robert Rider",
-        email: "robert.rider@test.uniride.com",
-        phone: "+1234567892",
-        vehicle_model: "Tesla Model 3 2022",
-        plate_number: "TES-9012",
-        drivers_license: "https://example.com/license/robert.jpg",
-        available_seats: 4,
-      },
-    ];
-
-    for (const driverData of testDriverApplications) {
-      // Create driver application (no user_id needed - public application)
-      const application = await DriverApplication.create({
-        name: driverData.name,
-        email: driverData.email,
-        phone: driverData.phone,
-        vehicle_model: driverData.vehicle_model,
-        plate_number: driverData.plate_number,
-        drivers_license: driverData.drivers_license,
-        available_seats: driverData.available_seats,
-        status: "pending",
-      });
-
-      console.log(`✅ Driver application created: ${driverData.email}`);
-
-      // Send application received email
-      try {
-        await sendDriverApplicationReceivedEmail({
-          name: application.name,
-          email: application.email,
-          applicationId: application._id,
-        });
-        console.log(`📧 Application email sent to: ${driverData.email}`);
-      } catch (emailError) {
-        console.error(
-          `⚠️  Failed to send email to ${driverData.email}:`,
-          emailError.message
-        );
-      }
-    }
+    // 4. Create Test Driver Applications (Pending - optional, can be commented out)
+    // Skipping pending applications to avoid sending emails to fake addresses
 
     // 5. Create Test Approved Drivers
     console.log("\n✅ Creating Test Approved Drivers...");
     const approvedDriverData = [
       {
-        name: "Tom Transporter",
-        email: "tom.transporter@test.uniride.com",
+        name: "Muhammed Abiodun",
+        email: "muhammedabiodun42@gmail.com",
         password: "password123",
-        phone: "+1234567893",
-        vehicle_model: "Ford Focus 2019",
-        plate_number: "FOR-3456",
+        phone: "+2348012345678",
+        vehicle_model: "Toyota Camry 2020",
+        plate_number: "ABC-1234",
         available_seats: 4,
-        bank_name: "Chase Bank",
-        bank_account_number: "1234567890",
-        bank_account_name: "Tom Transporter",
-      },
-      {
-        name: "Lisa Lifter",
-        email: "lisa.lifter@test.uniride.com",
-        password: "password123",
-        phone: "+1234567894",
-        vehicle_model: "Nissan Altima 2020",
-        plate_number: "NIS-7890",
-        available_seats: 3,
-        bank_name: "Bank of America",
-        bank_account_number: "0987654321",
-        bank_account_name: "Lisa Lifter",
+        bank_name: "GTBank",
+        bank_account_number: "0123456789",
+        bank_account_name: "Muhammed Abiodun",
       },
     ];
 
@@ -226,6 +191,20 @@ const seedDatabase = async () => {
         role: "driver",
         email_verified: true,
         first_login: false,
+      });
+
+      // Create notification settings with all notifications enabled by default
+      await NotificationSettings.create({
+        user_id: driverUser._id,
+        push_notifications_enabled: true,
+        email_notifications_enabled: true,
+        notification_preferences: {
+          new_ride_requests: true,
+          booking_confirmed: true,
+          payment_received: true,
+          promotional_messages: true,
+          broadcast_messages: true,
+        },
       });
 
       const driver = await Driver.create({
@@ -256,35 +235,16 @@ const seedDatabase = async () => {
     console.log(`   Email: ${process.env.DEFAULT_SUPER_ADMIN_EMAIL}`);
     console.log(`   Password: ${process.env.DEFAULT_SUPER_ADMIN_PASSWORD}`);
     console.log("\n🔧 Admins:");
-    console.log("   Email: admin1@test.uniride.com | Password: admin123");
-    console.log("   Email: admin2@test.uniride.com | Password: admin123");
+    console.log("   Email: muhammedabiodun43@gmail.com | Password: admin123");
     console.log("\n👥 Regular Users:");
-    console.log("   Email: john.doe@test.uniride.com | Password: password123");
     console.log(
-      "   Email: jane.smith@test.uniride.com | Password: password123"
+      "   Email: mustapha.muhammed@bowen.edu.ng | Password: password123"
     );
-    console.log(
-      "   Email: mike.johnson@test.uniride.com | Password: password123"
-    );
-    console.log(
-      "   Email: sarah.williams@test.uniride.com | Password: password123"
-    );
-    console.log("\n🚗 Pending Driver Applications:");
-    console.log(
-      "   Email: david.driver@test.uniride.com | Password: password123"
-    );
-    console.log(
-      "   Email: emma.driver@test.uniride.com | Password: password123"
-    );
-    console.log(
-      "   Email: robert.rider@test.uniride.com | Password: password123"
-    );
+    console.log("   Email: profilex.dev@gmail.com | Password: password123");
+    console.log("   Email: gmm527000@gmail.com | Password: password123");
     console.log("\n✅ Approved Drivers:");
     console.log(
-      "   Email: tom.transporter@test.uniride.com | Password: password123"
-    );
-    console.log(
-      "   Email: lisa.lifter@test.uniride.com | Password: password123"
+      "   Email: muhammedabiodun42@gmail.com | Password: password123"
     );
     console.log("\n========================================\n");
 

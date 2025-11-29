@@ -6,11 +6,17 @@ const AdminNotification = require("../models/AdminNotification");
 const Ride = require("../models/Ride");
 const Booking = require("../models/Booking");
 const SupportTicket = require("../models/SupportTicket");
+const BroadcastMessage = require("../models/BroadcastMessage");
+const NotificationSettings = require("../models/NotificationSettings");
 const {
   sendDriverApprovalEmail,
   sendDriverRejectionEmail,
   sendAdminInvitationEmail,
+  sendBroadcastEmail,
 } = require("../services/emailService");
+const {
+  sendNotificationToRole,
+} = require("../services/pushNotificationService");
 const bcrypt = require("bcrypt");
 
 /**
@@ -63,6 +69,21 @@ const createAdmin = async (req, res, next) => {
       role: "admin",
       email_verified: false,
       first_login: true,
+    });
+
+    // Create notification settings with all notifications enabled by default
+    await NotificationSettings.create({
+      user_id: admin._id,
+      push_notifications_enabled: true,
+      email_notifications_enabled: true,
+      notification_preferences: {
+        new_driver_applications: true,
+        user_flagged: true,
+        system_alerts: true,
+        user_reports: true,
+        promotional_messages: true,
+        broadcast_messages: true,
+      },
     });
 
     // Send admin invitation email
@@ -303,6 +324,20 @@ const approveDriver = async (req, res, next) => {
         role: "driver",
         email_verified: false,
         first_login: true,
+      });
+
+      // Create notification settings with all notifications enabled by default
+      await NotificationSettings.create({
+        user_id: user._id,
+        push_notifications_enabled: true,
+        email_notifications_enabled: true,
+        notification_preferences: {
+          new_ride_requests: true,
+          booking_confirmed: true,
+          payment_received: true,
+          promotional_messages: true,
+          broadcast_messages: true,
+        },
       });
 
       // Link application to user
@@ -2021,6 +2056,228 @@ const getDashboard = async (req, res, next) => {
   }
 };
 
+/**
+ * @swagger
+ * /api/admin/broadcast:
+ *   post:
+ *     summary: Send broadcast message to users, drivers, admins, or all
+ *     tags: [Admin]
+ *     security:
+ *       - bearerAuth: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - title
+ *               - message
+ *               - target_audience
+ *             properties:
+ *               title:
+ *                 type: string
+ *               message:
+ *                 type: string
+ *               target_audience:
+ *                 type: string
+ *                 enum: [all, users, drivers, admins]
+ *               notification_type:
+ *                 type: string
+ *                 enum: [push, email, both]
+ *                 default: both
+ *     responses:
+ *       200:
+ *         description: Broadcast message sent successfully
+ */
+const sendBroadcastMessage = async (req, res, next) => {
+  try {
+    const {
+      title,
+      message,
+      target_audience,
+      notification_type = "both",
+    } = req.body;
+
+    if (!title || !message || !target_audience) {
+      return res.status(400).json({
+        success: false,
+        message: "Title, message, and target_audience are required",
+      });
+    }
+
+    // Create broadcast record
+    const broadcast = await BroadcastMessage.create({
+      title,
+      message,
+      target_audience,
+      notification_type,
+      sent_by: req.user._id,
+      sent_by_name: req.user.name,
+      status: "sending",
+    });
+
+    // Send push notifications asynchronously
+    if (notification_type === "push" || notification_type === "both") {
+      const pushResult = await sendNotificationToRole({
+        role: target_audience,
+        title,
+        message,
+        data: {
+          broadcast_id: broadcast._id.toString(),
+          sent_by: req.user.name,
+        },
+        notificationType: "broadcast_messages",
+      });
+
+      broadcast.total_recipients = pushResult.total || 0;
+      broadcast.successful_sends = pushResult.successful || 0;
+      broadcast.failed_sends = pushResult.failed || 0;
+    }
+
+    // Send emails if notification_type is 'email' or 'both'
+    if (notification_type === "email" || notification_type === "both") {
+      try {
+        // Determine which users to send emails to based on target_audience
+        let userFilter = {};
+        if (target_audience === "users") {
+          userFilter = { role: "user" };
+        } else if (target_audience === "drivers") {
+          userFilter = { role: "driver" };
+        } else if (target_audience === "admins") {
+          userFilter = { role: { $in: ["admin", "super_admin"] } };
+        } else if (target_audience === "all") {
+          userFilter = {}; // All users
+        }
+
+        // Get users and their notification settings
+        const users = await User.find(userFilter).select("name email role");
+
+        // Get notification settings for these users
+        const userIds = users.map((u) => u._id);
+        const settingsMap = await NotificationSettings.find({
+          user_id: { $in: userIds },
+          email_notifications_enabled: true,
+          "notification_preferences.broadcast_messages": true,
+        }).then((settings) => {
+          const map = {};
+          settings.forEach((s) => {
+            map[s.user_id.toString()] = s;
+          });
+          return map;
+        });
+
+        let emailSuccessCount = 0;
+        let emailFailCount = 0;
+
+        // Send emails to users who have email notifications enabled
+        for (const user of users) {
+          const userIdStr = user._id.toString();
+          const settings = settingsMap[userIdStr];
+
+          // Skip if user hasn't enabled email notifications or broadcast messages
+          if (!settings) {
+            continue;
+          }
+
+          try {
+            await sendBroadcastEmail({
+              name: user.name,
+              email: user.email,
+              role: user.role,
+              title,
+              message,
+              senderName: req.user.name,
+              targetAudience: target_audience,
+            });
+            emailSuccessCount++;
+          } catch (emailError) {
+            console.error(
+              `Failed to send broadcast email to ${user.email}:`,
+              emailError.message
+            );
+            emailFailCount++;
+          }
+        }
+
+        // Update broadcast stats to include email sends
+        if (notification_type === "email") {
+          // Email only
+          broadcast.total_recipients = users.length;
+          broadcast.successful_sends = emailSuccessCount;
+          broadcast.failed_sends = emailFailCount;
+        } else {
+          // Both push and email
+          broadcast.total_recipients += users.length;
+          broadcast.successful_sends += emailSuccessCount;
+          broadcast.failed_sends += emailFailCount;
+        }
+
+        console.log(
+          `📧 Broadcast emails sent: ${emailSuccessCount} successful, ${emailFailCount} failed`
+        );
+      } catch (emailError) {
+        console.error("Error sending broadcast emails:", emailError.message);
+        // Don't fail the entire broadcast if emails fail
+      }
+    }
+
+    broadcast.status = "completed";
+    broadcast.completed_at = new Date();
+    await broadcast.save();
+
+    res.status(200).json({
+      success: true,
+      message: "Broadcast message sent successfully",
+      data: {
+        broadcast_id: broadcast._id,
+        total_recipients: broadcast.total_recipients,
+        successful_sends: broadcast.successful_sends,
+        failed_sends: broadcast.failed_sends,
+      },
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * @swagger
+ * /api/admin/broadcasts:
+ *   get:
+ *     summary: Get all broadcast messages history
+ *     tags: [Admin]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: query
+ *         name: limit
+ *         schema:
+ *           type: number
+ *         description: Limit number of results (default 20)
+ *     responses:
+ *       200:
+ *         description: Broadcast history retrieved
+ */
+const getBroadcastHistory = async (req, res, next) => {
+  try {
+    const { limit = 20 } = req.query;
+
+    const broadcasts = await BroadcastMessage.find()
+      .sort({ createdAt: -1 })
+      .limit(parseInt(limit))
+      .populate("sent_by", "name email role");
+
+    res.status(200).json({
+      success: true,
+      count: broadcasts.length,
+      data: broadcasts,
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
 module.exports = {
   createAdmin,
   getAllAdmins,
@@ -2045,4 +2302,6 @@ module.exports = {
   deleteNotification,
   clearAllNotifications,
   getDashboard,
+  sendBroadcastMessage,
+  getBroadcastHistory,
 };

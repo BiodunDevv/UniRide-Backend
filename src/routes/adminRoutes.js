@@ -24,6 +24,8 @@ const {
   deleteNotification,
   clearAllNotifications,
   getDashboard,
+  sendBroadcastMessage,
+  getBroadcastHistory,
 } = require("../controllers/adminController");
 const { protect } = require("../middlewares/authMiddleware");
 const authorize = require("../middlewares/roleMiddleware");
@@ -159,6 +161,20 @@ router.delete(
   protect,
   authorize("admin", "super_admin"),
   deleteNotification
+);
+
+// Broadcast messaging
+router.post(
+  "/broadcast",
+  protect,
+  authorize("admin", "super_admin"),
+  sendBroadcastMessage
+);
+router.get(
+  "/broadcasts",
+  protect,
+  authorize("admin", "super_admin"),
+  getBroadcastHistory
 );
 
 module.exports = router;

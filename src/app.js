@@ -13,6 +13,7 @@ const adminRoutes = require("./routes/adminRoutes");
 const rideRoutes = require("./routes/rideRoutes");
 const bookingRoutes = require("./routes/bookingRoutes");
 const supportRoutes = require("./routes/supportRoutes");
+const settingsRoutes = require("./routes/settingsRoutes");
 
 const app = express();
 
@@ -99,6 +100,7 @@ app.use("/api/admin", adminRoutes);
 app.use("/api/rides", rideRoutes);
 app.use("/api/booking", bookingRoutes);
 app.use("/api/support", supportRoutes);
+app.use("/api/settings", settingsRoutes);
 
 // Welcome route
 app.get("/", (req, res) => {
