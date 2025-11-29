@@ -147,17 +147,18 @@ router.patch(
   authorize("admin", "super_admin"),
   markAllNotificationsRead
 );
-router.delete(
-  "/notifications/:id",
-  protect,
-  authorize("admin", "super_admin"),
-  deleteNotification
-);
+// Clear all notifications MUST come before :id route
 router.delete(
   "/notifications/clear-all",
   protect,
   authorize("admin", "super_admin"),
   clearAllNotifications
+);
+router.delete(
+  "/notifications/:id",
+  protect,
+  authorize("admin", "super_admin"),
+  deleteNotification
 );
 
 module.exports = router;

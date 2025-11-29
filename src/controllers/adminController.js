@@ -1102,8 +1102,16 @@ const deleteDriver = async (req, res, next) => {
     }
 
     if (force === "true") {
-      // Hard delete - permanently remove driver and update user role
+      // Hard delete - permanently remove driver, delete application, and update user role
+      const driverEmail = driver.user_id.email;
+
+      // Delete the driver profile
       await Driver.findByIdAndDelete(id);
+
+      // Delete all driver applications associated with this email (so they can reapply)
+      await DriverApplication.deleteMany({ email: driverEmail });
+
+      // Revert user role to regular user
       await User.findByIdAndUpdate(driver.user_id._id, { role: "user" });
 
       // Create notification about driver deletion
@@ -1133,7 +1141,7 @@ const deleteDriver = async (req, res, next) => {
       return res.status(200).json({
         success: true,
         message:
-          "Driver permanently deleted and user role reverted to regular user",
+          "Driver permanently deleted, applications removed, and user role reverted to regular user. They can now reapply if desired.",
       });
     } else {
       // Soft delete - flag the driver's user account
@@ -1617,7 +1625,7 @@ const getDashboard = async (req, res, next) => {
           },
         },
         { $count: "total" },
-      ]).then((result) => (result[0]?.total || 0)),
+      ]).then((result) => result[0]?.total || 0),
       Driver.countDocuments({ createdAt: { $gte: startDate } }),
 
       // Driver application queries
@@ -1668,7 +1676,9 @@ const getDashboard = async (req, res, next) => {
       Booking.countDocuments(),
       Booking.countDocuments({ status: "completed" }),
       Booking.countDocuments({ status: "cancelled" }),
-      Booking.countDocuments({ status: { $in: ["active", "accepted", "in_progress"] } }),
+      Booking.countDocuments({
+        status: { $in: ["active", "accepted", "in_progress"] },
+      }),
       Booking.aggregate([
         {
           $match: { createdAt: { $gte: startDate } },
@@ -1821,7 +1831,9 @@ const getDashboard = async (req, res, next) => {
 
     // Get previous period data for comparison
     let previousPeriodStart;
-    const periodDays = Math.floor((new Date() - startDate) / (1000 * 60 * 60 * 24));
+    const periodDays = Math.floor(
+      (new Date() - startDate) / (1000 * 60 * 60 * 24)
+    );
     previousPeriodStart = new Date(startDate);
     previousPeriodStart.setDate(previousPeriodStart.getDate() - periodDays);
 
@@ -1881,9 +1893,7 @@ const getDashboard = async (req, res, next) => {
         cancelled_rides: cancelledRides,
         in_progress_rides: inProgressRides,
         ride_completion_rate:
-          totalRides > 0
-            ? ((completedRides / totalRides) * 100).toFixed(2)
-            : 0,
+          totalRides > 0 ? ((completedRides / totalRides) * 100).toFixed(2) : 0,
 
         total_bookings: totalBookings,
         completed_bookings: completedBookings,

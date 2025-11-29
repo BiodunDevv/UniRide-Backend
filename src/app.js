@@ -31,13 +31,23 @@ const allowedOrigins = [
 app.use(
   cors({
     origin: function (origin, callback) {
-      // Allow requests with no origin (like mobile apps or curl requests)
+      // Allow requests with no origin (like mobile apps, Postman, curl, Swagger UI)
       if (!origin) return callback(null, true);
+
+      // Allow all localhost origins in development
+      if (
+        origin.startsWith("http://localhost:") ||
+        origin.startsWith("http://127.0.0.1:")
+      ) {
+        return callback(null, true);
+      }
 
       if (allowedOrigins.indexOf(origin) !== -1) {
         callback(null, true);
       } else {
-        callback(new Error("Not allowed by CORS"));
+        // Don't throw error, just log and deny
+        console.warn(`CORS blocked origin: ${origin}`);
+        callback(null, false);
       }
     },
     credentials: true,
