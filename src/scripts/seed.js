@@ -7,9 +7,7 @@ const Ride = require("../models/Ride");
 const Booking = require("../models/Booking");
 const FarePolicy = require("../models/FarePolicy");
 const NotificationSettings = require("../models/NotificationSettings");
-const {
-  sendDriverApplicationReceivedEmail,
-} = require("../services/emailService");
+
 
 const seedDatabase = async () => {
   try {
@@ -80,25 +78,25 @@ const seedDatabase = async () => {
     console.log("\n👥 Creating Test Users...");
     const testUsers = [
       {
-        name: "Muhammed Mustapha",
-        email: "mustapha.muhammed@bowen.edu.ng",
-        password: "password123",
-        role: "user",
-        email_verified: true,
+      name: "Muhammed Mustapha",
+      email: "mustapha.muhammed@bowen.edu.ng",
+      password: "Muhammed",
+      role: "user",
+      email_verified: true,
       },
       {
-        name: "ProfileX",
-        email: "profilex.dev@gmail.com",
-        password: "password123",
-        role: "user",
-        email_verified: true,
+      name: "ProfileX",
+      email: "profilex.dev@gmail.com",
+      password: "ProfileX",
+      role: "user",
+      email_verified: true,
       },
       {
-        name: "G Mm",
-        email: "gmm527000@gmail.com",
-        password: "password123",
-        role: "user",
-        email_verified: true,
+      name: "Gmm",
+      email: "gmm527000@gmail.com",
+      password: "Gmm527000",
+      role: "user",
+      email_verified: true,
       },
     ];
 
@@ -133,9 +131,9 @@ const seedDatabase = async () => {
       {
         name: "Muhammed Abiodun",
         email: "muhammedabiodun43@gmail.com",
-        password: "admin123",
+        password: "Muhammed",
         role: "admin",
-        email_verified: true,
+        email_verified: false,
         first_login: false,
       },
     ];
@@ -172,7 +170,7 @@ const seedDatabase = async () => {
       {
         name: "Muhammed Abiodun",
         email: "muhammedabiodun42@gmail.com",
-        password: "password123",
+        password: "Muhammed",
         phone: "+2348012345678",
         vehicle_model: "Toyota Camry 2020",
         plate_number: "ABC-1234",
@@ -207,23 +205,6 @@ const seedDatabase = async () => {
         },
       });
 
-      const driver = await Driver.create({
-        user_id: driverUser._id,
-        phone: driverData.phone,
-        vehicle_model: driverData.vehicle_model,
-        plate_number: driverData.plate_number,
-        available_seats: driverData.available_seats,
-        drivers_license: "https://example.com/license/approved.jpg",
-        application_status: "approved",
-        approved_by: createdAdmins[0]._id,
-        approval_date: new Date(),
-        status: "active",
-        rating: 4.5,
-        bank_name: driverData.bank_name,
-        bank_account_number: driverData.bank_account_number,
-        bank_account_name: driverData.bank_account_name,
-      });
-
       console.log(`✅ Approved driver created: ${driverUser.email}`);
     }
 
@@ -235,16 +216,16 @@ const seedDatabase = async () => {
     console.log(`   Email: ${process.env.DEFAULT_SUPER_ADMIN_EMAIL}`);
     console.log(`   Password: ${process.env.DEFAULT_SUPER_ADMIN_PASSWORD}`);
     console.log("\n🔧 Admins:");
-    console.log("   Email: muhammedabiodun43@gmail.com | Password: admin123");
+    console.log("   Email: muhammedabiodun43@gmail.com | Password: Muhammed");
     console.log("\n👥 Regular Users:");
     console.log(
-      "   Email: mustapha.muhammed@bowen.edu.ng | Password: password123"
+      "   Email: mustapha.muhammed@bowen.edu.ng | Password: Muhammed"
     );
-    console.log("   Email: profilex.dev@gmail.com | Password: password123");
-    console.log("   Email: gmm527000@gmail.com | Password: password123");
+    console.log("   Email: profilex.dev@gmail.com | Password: ProfileX");
+    console.log("   Email: gmm527000@gmail.com | Password: Gmm527000");
     console.log("\n✅ Approved Drivers:");
     console.log(
-      "   Email: muhammedabiodun42@gmail.com | Password: password123"
+      "   Email: muhammedabiodun42@gmail.com | Password: Muhammed"
     );
     console.log("\n========================================\n");
 
