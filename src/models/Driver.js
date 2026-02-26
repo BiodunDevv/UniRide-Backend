@@ -24,6 +24,15 @@ const mongoose = require("mongoose");
  *           type: number
  *         drivers_license:
  *           type: string
+ *         vehicle_image:
+ *           type: string
+ *           description: URL to uploaded vehicle photo (optional)
+ *         vehicle_color:
+ *           type: string
+ *           description: Color of the vehicle
+ *         vehicle_description:
+ *           type: string
+ *           description: Additional description of the vehicle
  *         application_status:
  *           type: string
  *           enum: [pending, approved, rejected]
@@ -80,6 +89,18 @@ const driverSchema = new mongoose.Schema(
       type: String, // URL from frontend/cloudinary
       required: [true, "Driver license is required"],
     },
+    vehicle_image: {
+      type: String, // URL from frontend/cloudinary (optional vehicle photo)
+    },
+    vehicle_color: {
+      type: String,
+      trim: true,
+    },
+    vehicle_description: {
+      type: String,
+      trim: true,
+      maxlength: 500,
+    },
     application_status: {
       type: String,
       enum: ["pending", "approved", "rejected"],
@@ -119,10 +140,13 @@ const driverSchema = new mongoose.Schema(
       type: String,
       trim: true,
     },
+    license_last_updated: {
+      type: Date,
+    },
   },
   {
     timestamps: true,
-  }
+  },
 );
 
 // Method to update rating

@@ -8,7 +8,6 @@ const Booking = require("../models/Booking");
 const FarePolicy = require("../models/FarePolicy");
 const NotificationSettings = require("../models/NotificationSettings");
 
-
 const seedDatabase = async () => {
   try {
     // Connect to MongoDB
@@ -66,11 +65,11 @@ const seedDatabase = async () => {
       });
 
       console.log(
-        `✅ Super Admin created: ${process.env.DEFAULT_SUPER_ADMIN_EMAIL}`
+        `✅ Super Admin created: ${process.env.DEFAULT_SUPER_ADMIN_EMAIL}`,
       );
     } else {
       console.log(
-        `ℹ️  Super Admin already exists: ${process.env.DEFAULT_SUPER_ADMIN_EMAIL}`
+        `ℹ️  Super Admin already exists: ${process.env.DEFAULT_SUPER_ADMIN_EMAIL}`,
       );
     }
 
@@ -78,25 +77,25 @@ const seedDatabase = async () => {
     console.log("\n👥 Creating Test Users...");
     const testUsers = [
       {
-      name: "Muhammed Mustapha",
-      email: "mustapha.muhammed@bowen.edu.ng",
-      password: "Muhammed",
-      role: "user",
-      email_verified: true,
+        name: "Muhammed Mustapha",
+        email: "mustapha.muhammed@bowen.edu.ng",
+        password: "balikiss12",
+        role: "user",
+        email_verified: true,
       },
       {
-      name: "ProfileX",
-      email: "profilex.dev@gmail.com",
-      password: "ProfileX",
-      role: "user",
-      email_verified: true,
+        name: "ProfileX",
+        email: "profilex.dev@gmail.com",
+        password: "balikiss12",
+        role: "user",
+        email_verified: true,
       },
       {
-      name: "Gmm",
-      email: "gmm527000@gmail.com",
-      password: "Gmm527000",
-      role: "user",
-      email_verified: true,
+        name: "Gmm",
+        email: "gmm527000@gmail.com",
+        password: "balikiss12",
+        role: "user",
+        email_verified: true,
       },
     ];
 
@@ -131,7 +130,7 @@ const seedDatabase = async () => {
       {
         name: "Muhammed Abiodun",
         email: "muhammedabiodun43@gmail.com",
-        password: "Muhammed",
+        password: "balikiss12",
         role: "admin",
         email_verified: false,
         first_login: false,
@@ -170,11 +169,13 @@ const seedDatabase = async () => {
       {
         name: "Muhammed Abiodun",
         email: "muhammedabiodun42@gmail.com",
-        password: "Muhammed",
+        password: "balikiss12",
         phone: "+2348012345678",
         vehicle_model: "Toyota Camry 2020",
         plate_number: "ABC-1234",
         available_seats: 4,
+        vehicle_color: "Black",
+        vehicle_description: "Clean and comfortable campus ride",
         bank_name: "GTBank",
         bank_account_number: "0123456789",
         bank_account_name: "Muhammed Abiodun",
@@ -189,6 +190,26 @@ const seedDatabase = async () => {
         role: "driver",
         email_verified: true,
         first_login: false,
+        is_flagged: false,
+      });
+
+      // Create Driver profile document
+      await Driver.create({
+        user_id: driverUser._id,
+        phone: driverData.phone,
+        vehicle_model: driverData.vehicle_model,
+        plate_number: driverData.plate_number,
+        available_seats: driverData.available_seats,
+        vehicle_color: driverData.vehicle_color,
+        vehicle_description: driverData.vehicle_description,
+        bank_name: driverData.bank_name,
+        bank_account_number: driverData.bank_account_number,
+        bank_account_name: driverData.bank_account_name,
+        drivers_license: "https://placehold.co/600x400?text=Test+License",
+        application_status: "approved",
+        status: "inactive",
+        rating: 0,
+        total_ratings: 0,
       });
 
       // Create notification settings with all notifications enabled by default
@@ -205,7 +226,9 @@ const seedDatabase = async () => {
         },
       });
 
-      console.log(`✅ Approved driver created: ${driverUser.email}`);
+      console.log(
+        `✅ Approved driver created: ${driverUser.email} (+ Driver profile)`,
+      );
     }
 
     console.log("\n🎉 ========================================");
@@ -216,17 +239,15 @@ const seedDatabase = async () => {
     console.log(`   Email: ${process.env.DEFAULT_SUPER_ADMIN_EMAIL}`);
     console.log(`   Password: ${process.env.DEFAULT_SUPER_ADMIN_PASSWORD}`);
     console.log("\n🔧 Admins:");
-    console.log("   Email: muhammedabiodun43@gmail.com | Password: Muhammed");
+    console.log("   Email: muhammedabiodun43@gmail.com | Password: balikiss12");
     console.log("\n👥 Regular Users:");
     console.log(
-      "   Email: mustapha.muhammed@bowen.edu.ng | Password: Muhammed"
+      "   Email: mustapha.muhammed@bowen.edu.ng | Password: balikiss12",
     );
-    console.log("   Email: profilex.dev@gmail.com | Password: ProfileX");
-    console.log("   Email: gmm527000@gmail.com | Password: Gmm527000");
+    console.log("   Email: profilex.dev@gmail.com | Password: balikiss12");
+    console.log("   Email: gmm527000@gmail.com | Password: balikiss12");
     console.log("\n✅ Approved Drivers:");
-    console.log(
-      "   Email: muhammedabiodun42@gmail.com | Password: Muhammed"
-    );
+    console.log("   Email: muhammedabiodun42@gmail.com | Password: balikiss12");
     console.log("\n========================================\n");
 
     process.exit(0);

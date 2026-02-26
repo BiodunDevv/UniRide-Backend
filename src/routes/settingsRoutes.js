@@ -3,24 +3,26 @@ const router = express.Router();
 const {
   getNotificationSettings,
   updateNotificationSettings,
-  registerFCMToken,
-  removeFCMToken,
+  registerPushToken,
+  removePushToken,
 } = require("../controllers/settingsController");
 const { protect } = require("../middlewares/authMiddleware");
 
 /**
  * @swagger
  * tags:
- *   name: Settings
- *   description: User settings management (notification preferences, FCM tokens)
+ *   - name: Settings - Notifications
+ *     description: User notification preference management
+ *   - name: Settings - Push Tokens
+ *     description: Expo push token registration
  */
 
 // Notification settings routes
 router.get("/notifications", protect, getNotificationSettings);
 router.patch("/notifications", protect, updateNotificationSettings);
 
-// FCM token management
-router.post("/fcm-token", protect, registerFCMToken);
-router.delete("/fcm-token", protect, removeFCMToken);
+// Expo push token management
+router.post("/push-token", protect, registerPushToken);
+router.delete("/push-token", protect, removePushToken);
 
 module.exports = router;

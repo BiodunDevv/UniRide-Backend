@@ -21,6 +21,15 @@ const mongoose = require("mongoose");
  *         drivers_license:
  *           type: string
  *           description: URL to uploaded driver's license image
+ *         vehicle_image:
+ *           type: string
+ *           description: URL to uploaded vehicle photo (optional)
+ *         vehicle_color:
+ *           type: string
+ *           description: Color of the vehicle
+ *         vehicle_description:
+ *           type: string
+ *           description: Additional description of the vehicle
  *         phone:
  *           type: string
  *         status:
@@ -78,6 +87,26 @@ const driverApplicationSchema = new mongoose.Schema(
         message: "Driver's license must be a valid URL to the uploaded image",
       },
     },
+    vehicle_image: {
+      type: String, // URL from frontend/cloudinary (optional vehicle photo)
+      validate: {
+        validator: function (v) {
+          if (!v) return true; // Optional field
+          return /^https?:\/\/.+/.test(v);
+        },
+        message: "Vehicle image must be a valid URL",
+      },
+    },
+    vehicle_color: {
+      type: String,
+      trim: true,
+      maxlength: [50, "Vehicle color cannot exceed 50 characters"],
+    },
+    vehicle_description: {
+      type: String,
+      trim: true,
+      maxlength: [500, "Vehicle description cannot exceed 500 characters"],
+    },
     phone: {
       type: String,
       required: [true, "Phone number is required"],
@@ -112,7 +141,7 @@ const driverApplicationSchema = new mongoose.Schema(
   },
   {
     timestamps: true,
-  }
+  },
 );
 
 // Index for quick status queries
@@ -123,7 +152,7 @@ driverApplicationSchema.index({ email: 1 }, { unique: true });
 
 const DriverApplication = mongoose.model(
   "DriverApplication",
-  driverApplicationSchema
+  driverApplicationSchema,
 );
 
 module.exports = DriverApplication;

@@ -1,40 +1,11 @@
-const admin = require("firebase-admin");
+const { Expo } = require("expo-server-sdk");
 const NotificationSettings = require("../models/NotificationSettings");
 
-// Initialize Firebase Admin SDK
-let firebaseInitialized = false;
-
-const initializeFirebase = () => {
-  if (firebaseInitialized) return;
-
-  try {
-    const serviceAccount = process.env.FIREBASE_SERVICE_ACCOUNT_KEY
-      ? JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT_KEY)
-      : null;
-
-    if (!serviceAccount) {
-      console.warn(
-        "⚠️  Firebase service account not configured. Push notifications will be disabled."
-      );
-      return;
-    }
-
-    admin.initializeApp({
-      credential: admin.credential.cert(serviceAccount),
-    });
-
-    firebaseInitialized = true;
-    console.log("✅ Firebase Admin SDK initialized successfully");
-  } catch (error) {
-    console.error("❌ Error initializing Firebase Admin SDK:", error.message);
-  }
-};
-
-// Initialize Firebase on module load
-initializeFirebase();
+// Create Expo SDK client
+const expo = new Expo();
 
 /**
- * Send push notification to a single user
+ * Send push notification to a single user via Expo Push
  */
 const sendPushNotification = async ({
   user_id,
@@ -44,105 +15,89 @@ const sendPushNotification = async ({
   notificationType = "general",
 }) => {
   try {
-    if (!firebaseInitialized) {
-      console.warn("Firebase not initialized. Skipping push notification.");
-      return { success: false, error: "Firebase not initialized" };
-    }
-
-    // Get user's notification settings
     const settings = await NotificationSettings.findOne({ user_id });
 
     if (!settings) {
-      console.warn(`No notification settings found for user ${user_id}`);
       return { success: false, error: "No notification settings found" };
     }
 
-    // Check if push notifications are enabled
     if (!settings.push_notifications_enabled) {
-      console.log(`Push notifications disabled for user ${user_id}`);
       return { success: false, error: "Push notifications disabled" };
     }
 
     // Check specific notification preference
-    const preferenceKey = notificationType;
     if (
-      settings.notification_preferences[preferenceKey] !== undefined &&
-      !settings.notification_preferences[preferenceKey]
+      settings.notification_preferences[notificationType] !== undefined &&
+      !settings.notification_preferences[notificationType]
     ) {
-      console.log(
-        `User ${user_id} has disabled ${notificationType} notifications`
-      );
       return {
         success: false,
         error: `${notificationType} notifications disabled`,
       };
     }
 
-    // Get FCM tokens
-    const tokens = settings.fcm_tokens
-      .filter((t) => t.token)
+    // Get valid Expo push tokens
+    const tokens = settings.expo_push_tokens
+      .filter((t) => t.token && Expo.isExpoPushToken(t.token))
       .map((t) => t.token);
 
     if (tokens.length === 0) {
-      console.warn(`No FCM tokens found for user ${user_id}`);
-      return { success: false, error: "No FCM tokens" };
+      return { success: false, error: "No valid Expo push tokens" };
     }
 
-    // Prepare notification payload
-    const payload = {
-      notification: {
-        title,
-        body: message,
-      },
+    // Build messages
+    const messages = tokens.map((pushToken) => ({
+      to: pushToken,
+      sound: "default",
+      title,
+      body: message,
       data: {
         type: notificationType,
         timestamp: new Date().toISOString(),
         ...data,
       },
-    };
+    }));
 
-    // Send to all tokens
-    const results = await Promise.allSettled(
-      tokens.map((token) =>
-        admin.messaging().send({
-          token,
-          ...payload,
-        })
-      )
-    );
+    // Send in chunks (Expo recommends batching)
+    const chunks = expo.chunkPushNotifications(messages);
+    const tickets = [];
 
-    // Filter out invalid tokens
+    for (const chunk of chunks) {
+      try {
+        const ticketChunk = await expo.sendPushNotificationsAsync(chunk);
+        tickets.push(...ticketChunk);
+      } catch (err) {
+        console.error("Error sending push notification chunk:", err.message);
+      }
+    }
+
+    // Process tickets — remove invalid tokens
     const invalidTokens = [];
-    results.forEach((result, index) => {
-      if (result.status === "rejected") {
+    tickets.forEach((ticket, i) => {
+      if (ticket.status === "error") {
         if (
-          result.reason?.code === "messaging/invalid-registration-token" ||
-          result.reason?.code === "messaging/registration-token-not-registered"
+          ticket.details?.error === "DeviceNotRegistered" ||
+          ticket.details?.error === "InvalidCredentials"
         ) {
-          invalidTokens.push(tokens[index]);
+          invalidTokens.push(tokens[i]);
         }
       }
     });
 
-    // Remove invalid tokens
     if (invalidTokens.length > 0) {
       await NotificationSettings.updateOne(
         { user_id },
-        {
-          $pull: {
-            fcm_tokens: { token: { $in: invalidTokens } },
-          },
-        }
+        { $pull: { expo_push_tokens: { token: { $in: invalidTokens } } } },
       );
-      console.log(`Removed ${invalidTokens.length} invalid FCM tokens`);
+      console.log(`Removed ${invalidTokens.length} invalid Expo push tokens`);
     }
 
-    const successCount = results.filter((r) => r.status === "fulfilled").length;
+    const successCount = tickets.filter((t) => t.status === "ok").length;
 
     return {
       success: successCount > 0,
       sent_count: successCount,
-      failed_count: results.length - successCount,
+      failed_count: tickets.length - successCount,
       total_tokens: tokens.length,
     };
   } catch (error) {
@@ -162,15 +117,6 @@ const sendBulkPushNotification = async ({
   notificationType = "general",
 }) => {
   try {
-    if (!firebaseInitialized) {
-      console.warn("Firebase not initialized. Skipping bulk notifications.");
-      return {
-        success: false,
-        error: "Firebase not initialized",
-        results: [],
-      };
-    }
-
     const results = await Promise.allSettled(
       user_ids.map((user_id) =>
         sendPushNotification({
@@ -179,20 +125,36 @@ const sendBulkPushNotification = async ({
           message,
           data,
           notificationType,
-        })
-      )
+        }),
+      ),
     );
 
-    const successCount = results.filter(
-      (r) => r.status === "fulfilled" && r.value.success
-    ).length;
+    let successCount = 0;
+    let skippedCount = 0;
+    let failedCount = 0;
+
+    for (const r of results) {
+      if (r.status === "fulfilled" && r.value.success) {
+        successCount++;
+      } else if (
+        r.status === "fulfilled" &&
+        (r.value.error === "No valid Expo push tokens" ||
+          r.value.error === "No notification settings found" ||
+          r.value.error === "Push notifications disabled" ||
+          (r.value.error && r.value.error.includes("notifications disabled")))
+      ) {
+        skippedCount++;
+      } else {
+        failedCount++;
+      }
+    }
 
     return {
-      success: successCount > 0,
+      success: true,
       total: user_ids.length,
       successful: successCount,
-      failed: user_ids.length - successCount,
-      results,
+      skipped: skippedCount,
+      failed: failedCount,
     };
   } catch (error) {
     console.error("Error sending bulk push notifications:", error.message);
@@ -213,7 +175,6 @@ const sendNotificationToRole = async ({
   try {
     const User = require("../models/User");
 
-    // Determine role filter
     let roleFilter;
     if (role === "all") {
       roleFilter = {
@@ -229,7 +190,6 @@ const sendNotificationToRole = async ({
       roleFilter = { role };
     }
 
-    // Get all users with the role
     const users = await User.find(roleFilter).select("_id");
     const user_ids = users.map((u) => u._id);
 
@@ -240,7 +200,6 @@ const sendNotificationToRole = async ({
       };
     }
 
-    // Send bulk notifications
     return await sendBulkPushNotification({
       user_ids,
       title,
@@ -255,7 +214,7 @@ const sendNotificationToRole = async ({
 };
 
 module.exports = {
-  initializeFirebase,
+  expo,
   sendPushNotification,
   sendBulkPushNotification,
   sendNotificationToRole,

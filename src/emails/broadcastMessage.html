@@ -1,17 +1,19 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Broadcast Message - UniRide</title>
+    <title>Announcement - UniRide</title>
   </head>
   <body
     style="
       margin: 0;
       padding: 0;
-      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto,
-        Helvetica, Arial, sans-serif;
-      background-color: #f0f1f3;
+      font-family:
+        -apple-system, BlinkMacSystemFont, &quot;Segoe UI&quot;, Roboto,
+        &quot;Helvetica Neue&quot;, Arial, sans-serif;
+      background-color: #f4f4f5;
+      -webkit-font-smoothing: antialiased;
     "
   >
     <table
@@ -19,7 +21,7 @@
       cellspacing="0"
       border="0"
       width="100%"
-      style="background-color: #f0f1f3; padding: 40px 20px"
+      style="background-color: #f4f4f5; padding: 40px 16px"
     >
       <tr>
         <td align="center">
@@ -27,226 +29,153 @@
             cellpadding="0"
             cellspacing="0"
             border="0"
-            width="600"
+            width="520"
             style="
               background-color: #ffffff;
-              border: 2px solid #042f40;
-              border-radius: 12px;
+              border-radius: 16px;
               overflow: hidden;
+              box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
             "
           >
-            <!-- Header with Broadcast Icon -->
+            <!-- Logo -->
             <tr>
-              <td
-                style="
-                  background-color: #042f40;
-                  padding: 50px 40px;
-                  text-align: center;
-                "
-              >
-                <div style="margin-bottom: 20px">
-                  <svg
-                    width="80"
-                    height="80"
-                    viewBox="0 0 100 100"
-                    xmlns="http://www.w3.org/2000/svg"
-                    style="display: inline-block"
-                  >
-                    <circle
-                      cx="50"
-                      cy="50"
-                      r="35"
-                      fill="none"
-                      stroke="#F0F1F3"
-                      stroke-width="4"
-                    />
-                    <path
-                      d="M 50 30 L 50 50 L 65 50"
-                      fill="none"
-                      stroke="#F0F1F3"
-                      stroke-width="5"
-                      stroke-linecap="round"
-                    />
-                    <circle cx="50" cy="50" r="5" fill="#F0F1F3" />
-                  </svg>
-                </div>
-                <h1
-                  style="
-                    margin: 0;
-                    color: #f0f1f3;
-                    font-size: 36px;
-                    font-weight: 700;
-                  "
-                >
-                  📢 Announcement
-                </h1>
+              <td style="padding: 32px 40px 0; text-align: center">
                 <p
                   style="
-                    margin: 12px 0 0 0;
-                    color: #f0f1f3;
-                    font-size: 15px;
-                    font-weight: 500;
-                    letter-spacing: 1px;
-                    text-transform: uppercase;
-                    opacity: 0.9;
+                    margin: 0;
+                    color: #042f40;
+                    font-size: 20px;
+                    font-weight: 700;
+                    letter-spacing: -0.3px;
                   "
                 >
-                  {{badgeText}}
+                  UniRide
                 </p>
               </td>
             </tr>
-
+            <!-- Badge -->
             <tr>
-              <td style="padding: 50px 40px">
-                <div style="margin-bottom: 40px">
-                  <h2
-                    style="
-                      margin: 0 0 16px 0;
-                      color: #042f40;
-                      font-size: 28px;
-                      font-weight: 700;
-                    "
-                  >
-                    Hi {{recipientName}},
-                  </h2>
-                  <p
-                    style="
-                      margin: 0;
-                      color: #4a5568;
-                      font-size: 16px;
-                      line-height: 1.6;
-                    "
-                  >
-                    We have an important announcement for you from the UniRide team.
-                  </p>
-                </div>
-
-                <!-- Message Box -->
-                <table
-                  cellpadding="0"
-                  cellspacing="0"
-                  border="0"
-                  width="100%"
+              <td style="padding: 24px 40px 0; text-align: center">
+                <span
                   style="
-                    background-color: #f0f1f3;
-                    border: 2px solid #042f40;
-                    border-radius: 10px;
-                    margin: 30px 0;
+                    display: inline-block;
+                    background-color: #042f40;
+                    color: #ffffff;
+                    font-size: 11px;
+                    font-weight: 600;
+                    padding: 4px 14px;
+                    border-radius: 20px;
+                    text-transform: uppercase;
+                    letter-spacing: 0.5px;
+                  "
+                  >{{badgeText}}</span
+                >
+              </td>
+            </tr>
+            <!-- Heading -->
+            <tr>
+              <td style="padding: 20px 40px 0; text-align: center">
+                <h1
+                  style="
+                    margin: 0;
+                    color: #09090b;
+                    font-size: 22px;
+                    font-weight: 600;
+                    letter-spacing: -0.3px;
                   "
                 >
-                  <tr>
-                    <td style="padding: 30px">
-                      <h3
-                        style="
-                          margin: 0 0 16px 0;
-                          color: #042f40;
-                          font-size: 22px;
-                          font-weight: 700;
-                        "
-                      >
-                        {{title}}
-                      </h3>
-                      <div
-                        style="
-                          margin: 0;
-                          color: #4a5568;
-                          font-size: 16px;
-                          line-height: 1.6;
-                          white-space: pre-wrap;
-                        "
-                      >
-                        {{message}}
-                      </div>
-                    </td>
-                  </tr>
-                </table>
-
-                <!-- Message Details -->
+                  {{title}}
+                </h1>
+                <p
+                  style="
+                    margin: 8px 0 0;
+                    color: #71717a;
+                    font-size: 14px;
+                    line-height: 1.5;
+                  "
+                >
+                  Hi {{recipientName}}, here's an important update for you.
+                </p>
+              </td>
+            </tr>
+            <!-- Message -->
+            <tr>
+              <td style="padding: 28px 40px 0">
                 <table
                   cellpadding="0"
                   cellspacing="0"
                   border="0"
                   width="100%"
-                  style="
-                    background-color: #042f40;
-                    border-radius: 10px;
-                    margin: 30px 0;
-                  "
+                  style="background-color: #f4f4f5; border-radius: 12px"
                 >
                   <tr>
                     <td style="padding: 24px">
                       <p
                         style="
-                          margin: 0 0 10px 0;
-                          color: #f0f1f3;
-                          font-size: 16px;
-                          font-weight: 700;
-                        "
-                      >
-                        📋 Message Details
-                      </p>
-                      <p
-                        style="
-                          margin: 8px 0;
-                          color: #f0f1f3;
+                          margin: 0;
+                          color: #52525b;
                           font-size: 14px;
-                          line-height: 1.6;
-                          opacity: 0.95;
+                          line-height: 1.7;
                         "
                       >
-                        <strong>Sent by:</strong> {{senderName}}
-                      </p>
-                      <p
-                        style="
-                          margin: 8px 0;
-                          color: #f0f1f3;
-                          font-size: 14px;
-                          line-height: 1.6;
-                          opacity: 0.95;
-                        "
-                      >
-                        <strong>Date:</strong> {{sentDate}}
-                      </p>
-                      <p
-                        style="
-                          margin: 8px 0 0 0;
-                          color: #f0f1f3;
-                          font-size: 14px;
-                          line-height: 1.6;
-                          opacity: 0.95;
-                        "
-                      >
-                        <strong>Recipient Role:</strong> {{recipientRole}}
+                        {{message}}
                       </p>
                     </td>
                   </tr>
                 </table>
               </td>
             </tr>
-
+            <!-- Meta -->
             <tr>
-              <td
-                style="
-                  background-color: #f0f1f3;
-                  padding: 35px 40px;
-                  text-align: center;
-                  border-top: 2px solid #042f40;
-                "
-              >
-                <p
+              <td style="padding: 24px 40px 0">
+                <table cellpadding="0" cellspacing="0" border="0" width="100%">
+                  <tr>
+                    <td style="padding: 4px 0; color: #a1a1aa; font-size: 12px">
+                      From
+                    </td>
+                    <td
+                      style="
+                        padding: 4px 0;
+                        color: #52525b;
+                        font-size: 12px;
+                        text-align: right;
+                      "
+                    >
+                      {{senderName}}
+                    </td>
+                  </tr>
+                  <tr>
+                    <td style="padding: 4px 0; color: #a1a1aa; font-size: 12px">
+                      Sent
+                    </td>
+                    <td
+                      style="
+                        padding: 4px 0;
+                        color: #52525b;
+                        font-size: 12px;
+                        text-align: right;
+                      "
+                    >
+                      {{sentDate}}
+                    </td>
+                  </tr>
+                </table>
+              </td>
+            </tr>
+            <!-- Footer -->
+            <tr>
+              <td style="padding: 36px 40px 32px; text-align: center">
+                <div
                   style="
-                    margin: 0 0 8px 0;
-                    color: #042f40;
-                    font-size: 18px;
-                    font-weight: 700;
+                    height: 1px;
+                    background-color: #e4e4e7;
+                    margin-bottom: 24px;
                   "
-                >
-                  UniRide
-                </p>
-                <p style="margin: 0 0 12px 0; color: #6c757d; font-size: 13px">
+                ></div>
+                <p style="margin: 0 0 4px; color: #a1a1aa; font-size: 12px">
                   Campus Ride-Hailing Made Easy
                 </p>
-                <p style="margin: 0; color: #adb5bd; font-size: 12px">
+                <p style="margin: 0; color: #d4d4d8; font-size: 11px">
                   © {{currentYear}} UniRide. All rights reserved.
                 </p>
               </td>

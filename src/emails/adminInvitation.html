@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
@@ -9,9 +9,11 @@
     style="
       margin: 0;
       padding: 0;
-      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto,
-        Helvetica, Arial, sans-serif;
-      background-color: #f0f1f3;
+      font-family:
+        -apple-system, BlinkMacSystemFont, &quot;Segoe UI&quot;, Roboto,
+        &quot;Helvetica Neue&quot;, Arial, sans-serif;
+      background-color: #f4f4f5;
+      -webkit-font-smoothing: antialiased;
     "
   >
     <table
@@ -19,7 +21,7 @@
       cellspacing="0"
       border="0"
       width="100%"
-      style="background-color: #f0f1f3; padding: 40px 20px"
+      style="background-color: #f4f4f5; padding: 40px 16px"
     >
       <tr>
         <td align="center">
@@ -27,261 +29,217 @@
             cellpadding="0"
             cellspacing="0"
             border="0"
-            width="600"
+            width="520"
             style="
               background-color: #ffffff;
-              border: 2px solid #042f40;
-              border-radius: 12px;
+              border-radius: 16px;
               overflow: hidden;
+              box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
             "
           >
-            <!-- Header with Shield Icon -->
+            <!-- Logo -->
             <tr>
-              <td
-                style="
-                  background-color: #042f40;
-                  padding: 50px 40px;
-                  text-align: center;
-                "
-              >
-                <div style="margin-bottom: 20px">
-                  <svg
-                    width="80"
-                    height="80"
-                    viewBox="0 0 100 100"
-                    xmlns="http://www.w3.org/2000/svg"
-                    style="display: inline-block"
-                  >
-                    <path
-                      d="M 50 15 L 75 25 L 75 45 Q 75 70 50 85 Q 25 70 25 45 L 25 25 Z"
-                      fill="none"
-                      stroke="#F0F1F3"
-                      stroke-width="4"
-                    />
-                    <path
-                      d="M 40 50 L 47 57 L 60 40"
-                      fill="none"
-                      stroke="#F0F1F3"
-                      stroke-width="4"
-                      stroke-linecap="round"
-                      stroke-linejoin="round"
-                    />
-                  </svg>
-                </div>
-                <h1
+              <td style="padding: 32px 40px 0; text-align: center">
+                <p
                   style="
                     margin: 0;
-                    color: #f0f1f3;
-                    font-size: 36px;
-                    font-weight: 700;
-                  "
-                >
-                  Admin Invitation
-                </h1>
-                <p
-                  style="
-                    margin: 12px 0 0 0;
-                    color: #f0f1f3;
-                    font-size: 15px;
-                    font-weight: 500;
-                    letter-spacing: 1px;
-                    text-transform: uppercase;
-                    opacity: 0.9;
-                  "
-                >
-                  Welcome to UniRide Admin Team
-                </p>
-              </td>
-            </tr>
-
-            <tr>
-              <td style="padding: 50px 40px">
-                <div style="margin-bottom: 40px">
-                  <h2
-                    style="
-                      margin: 0 0 16px 0;
-                      color: #042f40;
-                      font-size: 28px;
-                      font-weight: 700;
-                    "
-                  >
-                    Hi {{adminName}},
-                  </h2>
-                  <p
-                    style="
-                      margin: 0;
-                      color: #4a5568;
-                      font-size: 16px;
-                      line-height: 1.6;
-                    "
-                  >
-                    Congratulations! You have been invited to join the UniRide
-                    administration team. You now have administrative access to
-                    manage the platform and help ensure smooth operations for
-                    our campus community.
-                  </p>
-                </div>
-
-                <table
-                  cellpadding="0"
-                  cellspacing="0"
-                  border="0"
-                  width="100%"
-                  style="
-                    background-color: #f0f1f3;
-                    border: 2px solid #042f40;
-                    border-radius: 10px;
-                    margin: 30px 0;
-                  "
-                >
-                  <tr>
-                    <td style="padding: 24px">
-                      <p
-                        style="
-                          margin: 0 0 16px 0;
-                          color: #042f40;
-                          font-size: 16px;
-                          font-weight: 700;
-                        "
-                      >
-                        Your Admin Credentials
-                      </p>
-                      <p
-                        style="
-                          margin: 0 0 8px 0;
-                          color: #4a5568;
-                          font-size: 14px;
-                        "
-                      >
-                        <strong style="color: #042f40">Email:</strong>
-                        {{adminEmail}}
-                      </p>
-                      <p
-                        style="
-                          margin: 0 0 8px 0;
-                          color: #4a5568;
-                          font-size: 14px;
-                        "
-                      >
-                        <strong style="color: #042f40">Role:</strong>
-                        {{adminRole}}
-                      </p>
-                      <p style="margin: 0; color: #4a5568; font-size: 14px">
-                        <strong style="color: #042f40">Created By:</strong>
-                        {{createdBy}}
-                      </p>
-                    </td>
-                  </tr>
-                </table>
-
-                <table
-                  cellpadding="0"
-                  cellspacing="0"
-                  border="0"
-                  width="100%"
-                  style="
-                    background-color: #f0f1f3;
-                    border: 2px solid #042f40;
-                    border-radius: 10px;
-                    margin: 30px 0;
-                  "
-                >
-                  <tr>
-                    <td style="padding: 24px">
-                      <p
-                        style="
-                          margin: 0 0 12px 0;
-                          color: #042f40;
-                          font-size: 16px;
-                          font-weight: 700;
-                        "
-                      >
-                        Your Responsibilities
-                      </p>
-                      <p
-                        style="
-                          margin: 0;
-                          color: #4a5568;
-                          font-size: 14px;
-                          line-height: 1.8;
-                        "
-                      >
-                        • Review and approve driver applications<br />
-                        • Manage user accounts and handle flags<br />
-                        • Update fare policies and platform settings<br />
-                        • Monitor platform activity and ensure compliance<br />
-                        • Provide support to users and drivers
-                      </p>
-                    </td>
-                  </tr>
-                </table>
-
-                <table
-                  cellpadding="0"
-                  cellspacing="0"
-                  border="0"
-                  width="100%"
-                  style="
-                    background-color: #042f40;
-                    border-radius: 10px;
-                    margin: 30px 0;
-                  "
-                >
-                  <tr>
-                    <td style="padding: 24px">
-                      <p
-                        style="
-                          margin: 0 0 10px 0;
-                          color: #f0f1f3;
-                          font-size: 16px;
-                          font-weight: 700;
-                        "
-                      >
-                        🔒 Important Security Note
-                      </p>
-                      <p
-                        style="
-                          margin: 0;
-                          color: #f0f1f3;
-                          font-size: 14px;
-                          line-height: 1.6;
-                          opacity: 0.95;
-                        "
-                      >
-                        Please use the password you provided during account
-                        creation. Make sure to keep your credentials secure and
-                        never share them with anyone. You can change your
-                        password anytime from your account settings.
-                      </p>
-                    </td>
-                  </tr>
-                </table>
-              </td>
-            </tr>
-
-            <tr>
-              <td
-                style="
-                  background-color: #f0f1f3;
-                  padding: 35px 40px;
-                  text-align: center;
-                  border-top: 2px solid #042f40;
-                "
-              >
-                <p
-                  style="
-                    margin: 0 0 8px 0;
                     color: #042f40;
-                    font-size: 18px;
+                    font-size: 20px;
                     font-weight: 700;
+                    letter-spacing: -0.3px;
                   "
                 >
                   UniRide
                 </p>
-                <p style="margin: 0 0 12px 0; color: #6c757d; font-size: 13px">
+              </td>
+            </tr>
+            <!-- Icon -->
+            <tr>
+              <td style="padding: 28px 40px 0; text-align: center">
+                <div
+                  style="
+                    display: inline-block;
+                    width: 56px;
+                    height: 56px;
+                    line-height: 56px;
+                    border-radius: 14px;
+                    background-color: #f5f3ff;
+                    text-align: center;
+                    font-size: 28px;
+                  "
+                >
+                  🛡️
+                </div>
+              </td>
+            </tr>
+            <!-- Heading -->
+            <tr>
+              <td style="padding: 20px 40px 0; text-align: center">
+                <h1
+                  style="
+                    margin: 0;
+                    color: #09090b;
+                    font-size: 22px;
+                    font-weight: 600;
+                    letter-spacing: -0.3px;
+                  "
+                >
+                  You're invited
+                </h1>
+                <p
+                  style="
+                    margin: 8px 0 0;
+                    color: #71717a;
+                    font-size: 14px;
+                    line-height: 1.5;
+                  "
+                >
+                  Hi {{adminName}}, you've been added to the admin team.
+                </p>
+              </td>
+            </tr>
+            <!-- Content -->
+            <tr>
+              <td style="padding: 28px 40px 0">
+                <p
+                  style="
+                    margin: 0;
+                    color: #52525b;
+                    font-size: 14px;
+                    line-height: 1.7;
+                  "
+                >
+                  <strong style="color: #09090b">{{createdBy}}</strong> has
+                  invited you to join UniRide as an
+                  <strong style="color: #09090b">{{adminRole}}</strong>. You can
+                  now access the admin dashboard to manage the platform.
+                </p>
+              </td>
+            </tr>
+            <!-- Credentials -->
+            <tr>
+              <td style="padding: 24px 40px 0">
+                <table
+                  cellpadding="0"
+                  cellspacing="0"
+                  border="0"
+                  width="100%"
+                  style="background-color: #f4f4f5; border-radius: 12px"
+                >
+                  <tr>
+                    <td style="padding: 20px 24px">
+                      <p
+                        style="
+                          margin: 0 0 14px;
+                          color: #09090b;
+                          font-size: 13px;
+                          font-weight: 600;
+                        "
+                      >
+                        Your account details
+                      </p>
+                      <table
+                        cellpadding="0"
+                        cellspacing="0"
+                        border="0"
+                        width="100%"
+                      >
+                        <tr>
+                          <td
+                            style="
+                              padding: 6px 0;
+                              color: #71717a;
+                              font-size: 13px;
+                              width: 60px;
+                            "
+                          >
+                            Email
+                          </td>
+                          <td
+                            style="
+                              padding: 6px 0;
+                              color: #09090b;
+                              font-size: 13px;
+                              font-weight: 500;
+                            "
+                          >
+                            {{adminEmail}}
+                          </td>
+                        </tr>
+                        <tr>
+                          <td
+                            style="
+                              padding: 6px 0;
+                              color: #71717a;
+                              font-size: 13px;
+                              width: 60px;
+                            "
+                          >
+                            Role
+                          </td>
+                          <td style="padding: 6px 0">
+                            <span
+                              style="
+                                display: inline-block;
+                                background-color: #042f40;
+                                color: #ffffff;
+                                font-size: 12px;
+                                font-weight: 600;
+                                padding: 3px 10px;
+                                border-radius: 6px;
+                              "
+                              >{{adminRole}}</span
+                            >
+                          </td>
+                        </tr>
+                      </table>
+                    </td>
+                  </tr>
+                </table>
+              </td>
+            </tr>
+            <!-- Security -->
+            <tr>
+              <td style="padding: 20px 40px 0">
+                <table
+                  cellpadding="0"
+                  cellspacing="0"
+                  border="0"
+                  width="100%"
+                  style="background-color: #fffbeb; border-radius: 10px"
+                >
+                  <tr>
+                    <td style="padding: 14px 20px">
+                      <p
+                        style="
+                          margin: 0;
+                          color: #92400e;
+                          font-size: 13px;
+                          line-height: 1.6;
+                        "
+                      >
+                        🔒 Sign in at the admin portal and change your password
+                        on first login to secure your account.
+                      </p>
+                    </td>
+                  </tr>
+                </table>
+              </td>
+            </tr>
+            <!-- Footer -->
+            <tr>
+              <td style="padding: 36px 40px 32px; text-align: center">
+                <div
+                  style="
+                    height: 1px;
+                    background-color: #e4e4e7;
+                    margin-bottom: 24px;
+                  "
+                ></div>
+                <p style="margin: 0 0 4px; color: #a1a1aa; font-size: 12px">
                   Campus Ride-Hailing Made Easy
                 </p>
-                <p style="margin: 0; color: #adb5bd; font-size: 12px">
+                <p style="margin: 0; color: #d4d4d8; font-size: 11px">
                   © {{currentYear}} UniRide. All rights reserved.
                 </p>
               </td>

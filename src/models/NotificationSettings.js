@@ -8,7 +8,7 @@ const notificationSettingsSchema = new mongoose.Schema(
       required: true,
       unique: true,
     },
-    fcm_tokens: [
+    expo_push_tokens: [
       {
         token: {
           type: String,
@@ -119,12 +119,12 @@ const notificationSettingsSchema = new mongoose.Schema(
   },
   {
     timestamps: true,
-  }
+  },
 );
 
 const NotificationSettings = mongoose.model(
   "NotificationSettings",
-  notificationSettingsSchema
+  notificationSettingsSchema,
 );
 
 module.exports = NotificationSettings;

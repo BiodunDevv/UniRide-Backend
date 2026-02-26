@@ -54,7 +54,7 @@ app.use(
     credentials: true,
     methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
     allowedHeaders: ["Content-Type", "Authorization"],
-  })
+  }),
 );
 
 // Body parser middleware
@@ -62,9 +62,35 @@ app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
 // Logging middleware
-if (process.env.NODE_ENV === "development") {
-  app.use(morgan("dev"));
-}
+app.use(morgan("dev"));
+
+// Log request & response bodies for auth routes (debug helper)
+app.use("/api/auth", (req, res, next) => {
+  const startTime = Date.now();
+  const { method, originalUrl } = req;
+
+  // Log request
+  if (req.body && Object.keys(req.body).length > 0) {
+    const safeBody = { ...req.body };
+    if (safeBody.password) safeBody.password = "***";
+    console.log(`📥 ${method} ${originalUrl}`, JSON.stringify(safeBody));
+  }
+
+  // Capture response
+  const originalJson = res.json.bind(res);
+  res.json = (body) => {
+    const duration = Date.now() - startTime;
+    const status = res.statusCode;
+    const icon = status >= 400 ? "❌" : "✅";
+    console.log(
+      `${icon} ${method} ${originalUrl} → ${status} (${duration}ms)`,
+      JSON.stringify(body),
+    );
+    return originalJson(body);
+  };
+
+  next();
+});
 
 // API Documentation
 app.use(
@@ -73,7 +99,7 @@ app.use(
   swaggerUi.setup(swaggerSpec, {
     customCss: ".swagger-ui .topbar { display: none }",
     customSiteTitle: "UniRide API Documentation",
-  })
+  }),
 );
 app.use(
   "/docs",
@@ -81,7 +107,7 @@ app.use(
   swaggerUi.setup(swaggerSpec, {
     customCss: ".swagger-ui .topbar { display: none }",
     customSiteTitle: "UniRide API Documentation",
-  })
+  }),
 );
 
 // Health check endpoint

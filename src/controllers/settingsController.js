@@ -1,12 +1,13 @@
 const NotificationSettings = require("../models/NotificationSettings");
 const User = require("../models/User");
+const { Expo } = require("expo-server-sdk");
 
 /**
  * @swagger
  * /api/settings/notifications:
  *   get:
  *     summary: Get notification settings for current user
- *     tags: [Settings]
+ *     tags: [Settings - Notifications]
  *     security:
  *       - bearerAuth: []
  *     responses:
@@ -40,7 +41,7 @@ const getNotificationSettings = async (req, res, next) => {
  * /api/settings/notifications:
  *   patch:
  *     summary: Update notification settings
- *     tags: [Settings]
+ *     tags: [Settings - Notifications]
  *     security:
  *       - bearerAuth: []
  *     requestBody:
@@ -77,7 +78,6 @@ const updateNotificationSettings = async (req, res, next) => {
       });
     }
 
-    // Update settings
     if (push_notifications_enabled !== undefined) {
       settings.push_notifications_enabled = push_notifications_enabled;
     }
@@ -87,7 +87,6 @@ const updateNotificationSettings = async (req, res, next) => {
     }
 
     if (notification_preferences) {
-      // Merge preferences
       settings.notification_preferences = {
         ...settings.notification_preferences.toObject(),
         ...notification_preferences,
@@ -108,10 +107,10 @@ const updateNotificationSettings = async (req, res, next) => {
 
 /**
  * @swagger
- * /api/settings/fcm-token:
+ * /api/settings/push-token:
  *   post:
- *     summary: Register FCM token for push notifications
- *     tags: [Settings]
+ *     summary: Register Expo push token for push notifications
+ *     tags: [Settings - Push Tokens]
  *     security:
  *       - bearerAuth: []
  *     requestBody:
@@ -121,10 +120,11 @@ const updateNotificationSettings = async (req, res, next) => {
  *           schema:
  *             type: object
  *             required:
- *               - fcm_token
+ *               - push_token
  *             properties:
- *               fcm_token:
+ *               push_token:
  *                 type: string
+ *                 description: Expo push token (ExponentPushToken[...])
  *               device_id:
  *                 type: string
  *               platform:
@@ -132,16 +132,23 @@ const updateNotificationSettings = async (req, res, next) => {
  *                 enum: [android, ios, web]
  *     responses:
  *       200:
- *         description: FCM token registered successfully
+ *         description: Push token registered successfully
  */
-const registerFCMToken = async (req, res, next) => {
+const registerPushToken = async (req, res, next) => {
   try {
-    const { fcm_token, device_id, platform } = req.body;
+    const { push_token, device_id, platform } = req.body;
 
-    if (!fcm_token) {
+    if (!push_token) {
       return res.status(400).json({
         success: false,
-        message: "FCM token is required",
+        message: "push_token is required",
+      });
+    }
+
+    if (!Expo.isExpoPushToken(push_token)) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid Expo push token format",
       });
     }
 
@@ -156,14 +163,13 @@ const registerFCMToken = async (req, res, next) => {
     }
 
     // Check if token already exists
-    const existingToken = settings.fcm_tokens.find(
-      (t) => t.token === fcm_token
+    const existingToken = settings.expo_push_tokens.find(
+      (t) => t.token === push_token,
     );
 
     if (!existingToken) {
-      // Add new token
-      settings.fcm_tokens.push({
-        token: fcm_token,
+      settings.expo_push_tokens.push({
+        token: push_token,
         device_id: device_id || null,
         platform: platform || "android",
       });
@@ -172,7 +178,7 @@ const registerFCMToken = async (req, res, next) => {
 
     res.status(200).json({
       success: true,
-      message: "FCM token registered successfully",
+      message: "Push token registered successfully",
     });
   } catch (error) {
     next(error);
@@ -181,10 +187,10 @@ const registerFCMToken = async (req, res, next) => {
 
 /**
  * @swagger
- * /api/settings/fcm-token:
+ * /api/settings/push-token:
  *   delete:
- *     summary: Remove FCM token
- *     tags: [Settings]
+ *     summary: Remove Expo push token
+ *     tags: [Settings - Push Tokens]
  *     security:
  *       - bearerAuth: []
  *     requestBody:
@@ -194,37 +200,33 @@ const registerFCMToken = async (req, res, next) => {
  *           schema:
  *             type: object
  *             required:
- *               - fcm_token
+ *               - push_token
  *             properties:
- *               fcm_token:
+ *               push_token:
  *                 type: string
  *     responses:
  *       200:
- *         description: FCM token removed successfully
+ *         description: Push token removed successfully
  */
-const removeFCMToken = async (req, res, next) => {
+const removePushToken = async (req, res, next) => {
   try {
-    const { fcm_token } = req.body;
+    const { push_token } = req.body;
 
-    if (!fcm_token) {
+    if (!push_token) {
       return res.status(400).json({
         success: false,
-        message: "FCM token is required",
+        message: "push_token is required",
       });
     }
 
     await NotificationSettings.updateOne(
       { user_id: req.user._id },
-      {
-        $pull: {
-          fcm_tokens: { token: fcm_token },
-        },
-      }
+      { $pull: { expo_push_tokens: { token: push_token } } },
     );
 
     res.status(200).json({
       success: true,
-      message: "FCM token removed successfully",
+      message: "Push token removed successfully",
     });
   } catch (error) {
     next(error);
@@ -234,6 +236,6 @@ const removeFCMToken = async (req, res, next) => {
 module.exports = {
   getNotificationSettings,
   updateNotificationSettings,
-  registerFCMToken,
-  removeFCMToken,
+  registerPushToken,
+  removePushToken,
 };

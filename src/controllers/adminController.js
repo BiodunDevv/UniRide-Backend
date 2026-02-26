@@ -8,6 +8,7 @@ const Booking = require("../models/Booking");
 const SupportTicket = require("../models/SupportTicket");
 const BroadcastMessage = require("../models/BroadcastMessage");
 const NotificationSettings = require("../models/NotificationSettings");
+const UserNotification = require("../models/UserNotification");
 const {
   sendDriverApprovalEmail,
   sendDriverRejectionEmail,
@@ -97,7 +98,7 @@ const createAdmin = async (req, res, next) => {
     } catch (emailError) {
       console.error(
         "Failed to send admin invitation email:",
-        emailError.message
+        emailError.message,
       );
       // Don't fail the creation if email fails
     }
@@ -269,9 +270,8 @@ const approveDriver = async (req, res, next) => {
   try {
     const { id } = req.params;
 
-    const application = await DriverApplication.findById(id).populate(
-      "user_id"
-    );
+    const application =
+      await DriverApplication.findById(id).populate("user_id");
 
     if (!application) {
       return res.status(404).json({
@@ -300,9 +300,12 @@ const approveDriver = async (req, res, next) => {
     const existingUser = await User.findOne({ email: application.email });
 
     if (existingUser) {
-      // User exists - update their role to driver
+      // User exists - update their role to driver and ensure unflagged
       user = existingUser;
-      await User.findByIdAndUpdate(user._id, { role: "driver" });
+      await User.findByIdAndUpdate(user._id, {
+        role: "driver",
+        is_flagged: false,
+      });
 
       // Link application to user
       application.user_id = user._id;
@@ -324,6 +327,7 @@ const approveDriver = async (req, res, next) => {
         role: "driver",
         email_verified: false,
         first_login: true,
+        is_flagged: false,
       });
 
       // Create notification settings with all notifications enabled by default
@@ -353,6 +357,9 @@ const approveDriver = async (req, res, next) => {
       plate_number: application.plate_number,
       available_seats: application.available_seats,
       drivers_license: application.drivers_license,
+      vehicle_image: application.vehicle_image || undefined,
+      vehicle_color: application.vehicle_color || undefined,
+      vehicle_description: application.vehicle_description || undefined,
       application_status: "approved",
       approved_by: req.user._id,
       approval_date: new Date(),
@@ -447,9 +454,8 @@ const rejectDriver = async (req, res, next) => {
       });
     }
 
-    const application = await DriverApplication.findById(id).populate(
-      "user_id"
-    );
+    const application =
+      await DriverApplication.findById(id).populate("user_id");
 
     if (!application) {
       return res.status(404).json({
@@ -530,7 +536,10 @@ const rejectDriver = async (req, res, next) => {
 const getAllDrivers = async (req, res, next) => {
   try {
     const drivers = await Driver.find()
-      .populate("user_id", "name email")
+      .populate(
+        "user_id",
+        "name email phone role email_verified createdAt is_flagged profile_picture",
+      )
       .sort({ createdAt: -1 });
 
     res.status(200).json({
@@ -568,7 +577,7 @@ const getDriverById = async (req, res, next) => {
     const driver = await Driver.findById(id)
       .populate(
         "user_id",
-        "name email phone role email_verified createdAt is_flagged"
+        "name email phone role email_verified createdAt is_flagged profile_picture",
       )
       .populate("approved_by", "name email role");
 
@@ -939,7 +948,7 @@ const deleteAdmin = async (req, res, next) => {
       } catch (notificationError) {
         console.error(
           "Error creating notification:",
-          notificationError.message
+          notificationError.message,
         );
       }
 
@@ -971,7 +980,7 @@ const deleteAdmin = async (req, res, next) => {
       } catch (notificationError) {
         console.error(
           "Error creating notification:",
-          notificationError.message
+          notificationError.message,
         );
       }
 
@@ -1053,7 +1062,7 @@ const deleteUser = async (req, res, next) => {
       } catch (notificationError) {
         console.error(
           "Error creating notification:",
-          notificationError.message
+          notificationError.message,
         );
       }
 
@@ -1084,7 +1093,7 @@ const deleteUser = async (req, res, next) => {
       } catch (notificationError) {
         console.error(
           "Error creating notification:",
-          notificationError.message
+          notificationError.message,
         );
       }
 
@@ -1169,7 +1178,7 @@ const deleteDriver = async (req, res, next) => {
       } catch (notificationError) {
         console.error(
           "Error creating notification:",
-          notificationError.message
+          notificationError.message,
         );
       }
 
@@ -1202,7 +1211,7 @@ const deleteDriver = async (req, res, next) => {
       } catch (notificationError) {
         console.error(
           "Error creating notification:",
-          notificationError.message
+          notificationError.message,
         );
       }
 
@@ -1255,7 +1264,7 @@ const flagUser = async (req, res, next) => {
     const user = await User.findByIdAndUpdate(
       id,
       { is_flagged },
-      { new: true }
+      { new: true },
     );
 
     if (!user) {
@@ -1368,7 +1377,7 @@ const markNotificationRead = async (req, res, next) => {
           },
         },
       },
-      { new: true }
+      { new: true },
     );
 
     if (!notification) {
@@ -1412,7 +1421,7 @@ const markAllNotificationsRead = async (req, res, next) => {
             read_at: new Date(),
           },
         },
-      }
+      },
     );
 
     res.status(200).json({
@@ -1867,7 +1876,7 @@ const getDashboard = async (req, res, next) => {
     // Get previous period data for comparison
     let previousPeriodStart;
     const periodDays = Math.floor(
-      (new Date() - startDate) / (1000 * 60 * 60 * 24)
+      (new Date() - startDate) / (1000 * 60 * 60 * 24),
     );
     previousPeriodStart = new Date(startDate);
     previousPeriodStart.setDate(previousPeriodStart.getDate() - periodDays);
@@ -1910,7 +1919,7 @@ const getDashboard = async (req, res, next) => {
         new_users_this_period: newUsersCount,
         user_growth_percentage: calculateGrowthPercentage(
           newUsersCount,
-          previousUsers
+          previousUsers,
         ).toFixed(2),
 
         total_drivers: totalDrivers,
@@ -1920,7 +1929,7 @@ const getDashboard = async (req, res, next) => {
         new_drivers_this_period: newDriversCount,
         driver_growth_percentage: calculateGrowthPercentage(
           newDriversCount,
-          previousDrivers
+          previousDrivers,
         ).toFixed(2),
 
         total_rides: totalRides,
@@ -1938,7 +1947,7 @@ const getDashboard = async (req, res, next) => {
         total_revenue: totalRevenue.toFixed(2),
         revenue_growth_percentage: calculateGrowthPercentage(
           totalRevenue,
-          previousRevenue
+          previousRevenue,
         ).toFixed(2),
 
         pending_applications: pendingApplications,
@@ -2133,6 +2142,7 @@ const sendBroadcastMessage = async (req, res, next) => {
       broadcast.total_recipients = pushResult.total || 0;
       broadcast.successful_sends = pushResult.successful || 0;
       broadcast.failed_sends = pushResult.failed || 0;
+      broadcast.skipped_sends = pushResult.skipped || 0;
     }
 
     // Send emails if notification_type is 'email' or 'both'
@@ -2194,7 +2204,7 @@ const sendBroadcastMessage = async (req, res, next) => {
           } catch (emailError) {
             console.error(
               `Failed to send broadcast email to ${user.email}:`,
-              emailError.message
+              emailError.message,
             );
             emailFailCount++;
           }
@@ -2214,12 +2224,40 @@ const sendBroadcastMessage = async (req, res, next) => {
         }
 
         console.log(
-          `📧 Broadcast emails sent: ${emailSuccessCount} successful, ${emailFailCount} failed`
+          `📧 Broadcast emails sent: ${emailSuccessCount} successful, ${emailFailCount} failed`,
         );
       } catch (emailError) {
         console.error("Error sending broadcast emails:", emailError.message);
         // Don't fail the entire broadcast if emails fail
       }
+    }
+
+    // Create in-app notifications for target users
+    try {
+      let notifFilter = {};
+      if (target_audience === "users") notifFilter = { role: "user" };
+      else if (target_audience === "drivers") notifFilter = { role: "driver" };
+      else if (target_audience === "admins")
+        notifFilter = { role: { $in: ["admin", "super_admin"] } };
+
+      const targetUsers = await User.find(notifFilter).select("_id");
+      if (targetUsers.length > 0) {
+        const notifications = targetUsers.map((u) => ({
+          user_id: u._id,
+          title,
+          message,
+          type: "broadcast",
+          metadata: {
+            broadcast_id: broadcast._id.toString(),
+            sent_by: req.user.name,
+            target_audience,
+          },
+        }));
+        await UserNotification.insertMany(notifications);
+        console.log(`📬 Created ${notifications.length} in-app notifications`);
+      }
+    } catch (notifError) {
+      console.error("Error creating in-app notifications:", notifError.message);
     }
 
     broadcast.status = "completed";
@@ -2233,6 +2271,7 @@ const sendBroadcastMessage = async (req, res, next) => {
         broadcast_id: broadcast._id,
         total_recipients: broadcast.total_recipients,
         successful_sends: broadcast.successful_sends,
+        skipped_sends: broadcast.skipped_sends || 0,
         failed_sends: broadcast.failed_sends,
       },
     });
@@ -2278,6 +2317,142 @@ const getBroadcastHistory = async (req, res, next) => {
   }
 };
 
+/**
+ * @swagger
+ * /api/admin/drivers/edit/{id}:
+ *   patch:
+ *     summary: Admin edit driver details
+ *     tags: [Admin]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: string
+ *         description: Driver ID
+ *     requestBody:
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             properties:
+ *               phone:
+ *                 type: string
+ *               vehicle_model:
+ *                 type: string
+ *               plate_number:
+ *                 type: string
+ *               available_seats:
+ *                 type: number
+ *               vehicle_color:
+ *                 type: string
+ *               vehicle_description:
+ *                 type: string
+ *               bank_name:
+ *                 type: string
+ *               bank_account_number:
+ *                 type: string
+ *               bank_account_name:
+ *                 type: string
+ *               status:
+ *                 type: string
+ *                 enum: [inactive, active]
+ *     responses:
+ *       200:
+ *         description: Driver updated successfully
+ */
+const adminUpdateDriver = async (req, res, next) => {
+  try {
+    const driver = await Driver.findById(req.params.id);
+    if (!driver) {
+      return res.status(404).json({
+        success: false,
+        message: "Driver not found",
+      });
+    }
+
+    const allowedFields = [
+      "phone",
+      "vehicle_model",
+      "plate_number",
+      "available_seats",
+      "vehicle_color",
+      "vehicle_description",
+      "bank_name",
+      "bank_account_number",
+      "bank_account_name",
+      "status",
+      "vehicle_image",
+      "drivers_license",
+    ];
+
+    for (const field of allowedFields) {
+      if (req.body[field] !== undefined) {
+        driver[field] = req.body[field];
+      }
+    }
+
+    await driver.save();
+
+    const updated = await Driver.findById(driver._id).populate(
+      "user_id",
+      "name email role email_verified is_flagged createdAt profile_picture",
+    );
+
+    res.status(200).json({
+      success: true,
+      message: "Driver updated successfully",
+      data: updated,
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * @swagger
+ * /api/admin/drivers/reset-license/{id}:
+ *   patch:
+ *     summary: Admin reset driver's license update restriction
+ *     tags: [Admin]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: string
+ *         description: Driver ID
+ *     responses:
+ *       200:
+ *         description: License restriction reset successfully
+ */
+const resetDriverLicense = async (req, res, next) => {
+  try {
+    const driver = await Driver.findById(req.params.id);
+    if (!driver) {
+      return res.status(404).json({
+        success: false,
+        message: "Driver not found",
+      });
+    }
+
+    driver.license_last_updated = null;
+    await driver.save();
+
+    res.status(200).json({
+      success: true,
+      message:
+        "Driver license update restriction has been reset. The driver can now update their license.",
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
 module.exports = {
   createAdmin,
   getAllAdmins,
@@ -2304,4 +2479,6 @@ module.exports = {
   getDashboard,
   sendBroadcastMessage,
   getBroadcastHistory,
+  adminUpdateDriver,
+  resetDriverLicense,
 };

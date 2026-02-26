@@ -44,6 +44,10 @@ const userSchema = new mongoose.Schema(
       required: [true, "Name is required"],
       trim: true,
     },
+    profile_picture: {
+      type: String, // Cloudinary URL
+      default: null,
+    },
     email: {
       type: String,
       required: [true, "Email is required"],
@@ -94,6 +98,22 @@ const userSchema = new mongoose.Schema(
       type: Boolean,
       default: false,
     },
+    pin_enabled: {
+      type: Boolean,
+      default: false,
+    },
+    pin_hash: {
+      type: String,
+      select: false,
+    },
+    pin_reset_code: {
+      type: String,
+      select: false,
+    },
+    pin_reset_expires: {
+      type: Date,
+      select: false,
+    },
     is_flagged: {
       type: Boolean,
       default: false,
@@ -136,7 +156,7 @@ const userSchema = new mongoose.Schema(
   },
   {
     timestamps: true,
-  }
+  },
 );
 
 // Hash password before saving

@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
@@ -9,9 +9,11 @@
     style="
       margin: 0;
       padding: 0;
-      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto,
-        Helvetica, Arial, sans-serif;
-      background-color: #f0f1f3;
+      font-family:
+        -apple-system, BlinkMacSystemFont, &quot;Segoe UI&quot;, Roboto,
+        &quot;Helvetica Neue&quot;, Arial, sans-serif;
+      background-color: #f4f4f5;
+      -webkit-font-smoothing: antialiased;
     "
   >
     <table
@@ -19,7 +21,7 @@
       cellspacing="0"
       border="0"
       width="100%"
-      style="background-color: #f0f1f3; padding: 40px 20px"
+      style="background-color: #f4f4f5; padding: 40px 16px"
     >
       <tr>
         <td align="center">
@@ -27,231 +29,256 @@
             cellpadding="0"
             cellspacing="0"
             border="0"
-            width="600"
+            width="520"
             style="
               background-color: #ffffff;
-              border: 2px solid #042f40;
-              border-radius: 12px;
+              border-radius: 16px;
               overflow: hidden;
+              box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
             "
           >
-            <!-- Header with Warning Icon -->
+            <!-- Logo -->
             <tr>
-              <td
-                style="
-                  background-color: #042f40;
-                  padding: 50px 40px;
-                  text-align: center;
-                "
-              >
-                <div style="margin-bottom: 20px">
-                  <svg
-                    width="80"
-                    height="80"
-                    viewBox="0 0 100 100"
-                    xmlns="http://www.w3.org/2000/svg"
-                    style="display: inline-block"
-                  >
-                    <path
-                      d="M 50 20 L 80 70 L 20 70 Z"
-                      fill="none"
-                      stroke="#F0F1F3"
-                      stroke-width="4"
-                      stroke-linejoin="round"
-                    />
-                    <line
-                      x1="50"
-                      y1="40"
-                      x2="50"
-                      y2="55"
-                      stroke="#F0F1F3"
-                      stroke-width="4"
-                      stroke-linecap="round"
-                    />
-                    <circle cx="50" cy="63" r="2" fill="#F0F1F3" />
-                  </svg>
-                </div>
-                <h1
+              <td style="padding: 32px 40px 0; text-align: center">
+                <p
                   style="
                     margin: 0;
-                    color: #f0f1f3;
-                    font-size: 36px;
-                    font-weight: 700;
-                  "
-                >
-                  Missed Ride
-                </h1>
-                <p
-                  style="
-                    margin: 12px 0 0 0;
-                    color: #f0f1f3;
-                    font-size: 15px;
-                    font-weight: 500;
-                    letter-spacing: 1px;
-                    text-transform: uppercase;
-                    opacity: 0.9;
-                  "
-                >
-                  No-Show Alert
-                </p>
-              </td>
-            </tr>
-
-            <tr>
-              <td style="padding: 50px 40px">
-                <div style="margin-bottom: 40px">
-                  <h2
-                    style="
-                      margin: 0 0 16px 0;
-                      color: #042f40;
-                      font-size: 28px;
-                      font-weight: 700;
-                    "
-                  >
-                    Hi {{userName}},
-                  </h2>
-                  <p
-                    style="
-                      margin: 0;
-                      color: #4a5568;
-                      font-size: 16px;
-                      line-height: 1.6;
-                    "
-                  >
-                    We noticed that you didn't show up for your scheduled ride.
-                    Your driver waited at the pickup location but was unable to
-                    connect with you.
-                  </p>
-                </div>
-
-                <table
-                  cellpadding="0"
-                  cellspacing="0"
-                  border="0"
-                  width="100%"
-                  style="
-                    background-color: #f0f1f3;
-                    border: 2px solid #042f40;
-                    border-radius: 10px;
-                    margin: 30px 0;
-                  "
-                >
-                  <tr>
-                    <td style="padding: 24px">
-                      <p
-                        style="
-                          margin: 0 0 16px 0;
-                          color: #042f40;
-                          font-size: 16px;
-                          font-weight: 700;
-                        "
-                      >
-                        Ride Details
-                      </p>
-                      <p
-                        style="
-                          margin: 0 0 8px 0;
-                          color: #4a5568;
-                          font-size: 14px;
-                        "
-                      >
-                        <strong style="color: #042f40">Driver:</strong>
-                        {{driverName}}
-                      </p>
-                      <p
-                        style="
-                          margin: 0 0 8px 0;
-                          color: #4a5568;
-                          font-size: 14px;
-                        "
-                      >
-                        <strong style="color: #042f40">Scheduled Time:</strong>
-                        {{scheduledTime}}
-                      </p>
-                      <p
-                        style="
-                          margin: 0 0 8px 0;
-                          color: #4a5568;
-                          font-size: 14px;
-                        "
-                      >
-                        <strong style="color: #042f40">Pickup Location:</strong>
-                        {{pickupLocation}}
-                      </p>
-                      <p style="margin: 0; color: #4a5568; font-size: 14px">
-                        <strong style="color: #042f40">Booking ID:</strong>
-                        {{bookingId}}
-                      </p>
-                    </td>
-                  </tr>
-                </table>
-
-                <table
-                  cellpadding="0"
-                  cellspacing="0"
-                  border="0"
-                  width="100%"
-                  style="
-                    background-color: #042f40;
-                    border-radius: 10px;
-                    margin: 30px 0;
-                  "
-                >
-                  <tr>
-                    <td style="padding: 24px">
-                      <p
-                        style="
-                          margin: 0 0 10px 0;
-                          color: #f0f1f3;
-                          font-size: 16px;
-                          font-weight: 700;
-                        "
-                      >
-                        ℹ️ Important Information
-                      </p>
-                      <p
-                        style="
-                          margin: 0;
-                          color: #f0f1f3;
-                          font-size: 14px;
-                          line-height: 1.6;
-                          opacity: 0.95;
-                        "
-                      >
-                        Multiple no-shows may affect your account status. If you
-                        need to cancel a ride, please do so in advance through
-                        the app to help our drivers manage their schedules
-                        better.
-                      </p>
-                    </td>
-                  </tr>
-                </table>
-              </td>
-            </tr>
-
-            <tr>
-              <td
-                style="
-                  background-color: #f0f1f3;
-                  padding: 35px 40px;
-                  text-align: center;
-                  border-top: 2px solid #042f40;
-                "
-              >
-                <p
-                  style="
-                    margin: 0 0 8px 0;
                     color: #042f40;
-                    font-size: 18px;
+                    font-size: 20px;
                     font-weight: 700;
+                    letter-spacing: -0.3px;
                   "
                 >
                   UniRide
                 </p>
-                <p style="margin: 0 0 12px 0; color: #6c757d; font-size: 13px">
+              </td>
+            </tr>
+            <!-- Icon -->
+            <tr>
+              <td style="padding: 28px 40px 0; text-align: center">
+                <div
+                  style="
+                    display: inline-block;
+                    width: 56px;
+                    height: 56px;
+                    line-height: 56px;
+                    border-radius: 14px;
+                    background-color: #fef2f2;
+                    text-align: center;
+                    font-size: 28px;
+                  "
+                >
+                  😔
+                </div>
+              </td>
+            </tr>
+            <!-- Heading -->
+            <tr>
+              <td style="padding: 20px 40px 0; text-align: center">
+                <h1
+                  style="
+                    margin: 0;
+                    color: #09090b;
+                    font-size: 22px;
+                    font-weight: 600;
+                    letter-spacing: -0.3px;
+                  "
+                >
+                  You missed your ride
+                </h1>
+                <p
+                  style="
+                    margin: 8px 0 0;
+                    color: #71717a;
+                    font-size: 14px;
+                    line-height: 1.5;
+                  "
+                >
+                  Hi {{userName}}, it looks like you didn't make it in time.
+                </p>
+              </td>
+            </tr>
+            <!-- Ride details -->
+            <tr>
+              <td style="padding: 28px 40px 0">
+                <table
+                  cellpadding="0"
+                  cellspacing="0"
+                  border="0"
+                  width="100%"
+                  style="background-color: #f4f4f5; border-radius: 12px"
+                >
+                  <tr>
+                    <td style="padding: 20px 24px">
+                      <p
+                        style="
+                          margin: 0 0 14px;
+                          color: #09090b;
+                          font-size: 13px;
+                          font-weight: 600;
+                        "
+                      >
+                        Ride details
+                      </p>
+                      <table
+                        cellpadding="0"
+                        cellspacing="0"
+                        border="0"
+                        width="100%"
+                      >
+                        <tr>
+                          <td
+                            style="
+                              padding: 6px 0;
+                              color: #71717a;
+                              font-size: 13px;
+                              width: 100px;
+                            "
+                          >
+                            From
+                          </td>
+                          <td
+                            style="
+                              padding: 6px 0;
+                              color: #09090b;
+                              font-size: 13px;
+                              font-weight: 500;
+                            "
+                          >
+                            {{pickupLocation}}
+                          </td>
+                        </tr>
+                        <tr>
+                          <td
+                            style="
+                              padding: 6px 0;
+                              color: #71717a;
+                              font-size: 13px;
+                              width: 100px;
+                            "
+                          >
+                            To
+                          </td>
+                          <td
+                            style="
+                              padding: 6px 0;
+                              color: #09090b;
+                              font-size: 13px;
+                              font-weight: 500;
+                            "
+                          >
+                            {{destination}}
+                          </td>
+                        </tr>
+                        <tr>
+                          <td
+                            style="
+                              padding: 6px 0;
+                              color: #71717a;
+                              font-size: 13px;
+                              width: 100px;
+                            "
+                          >
+                            Scheduled
+                          </td>
+                          <td
+                            style="
+                              padding: 6px 0;
+                              color: #09090b;
+                              font-size: 13px;
+                              font-weight: 500;
+                            "
+                          >
+                            {{scheduledTime}}
+                          </td>
+                        </tr>
+                        <tr>
+                          <td
+                            style="
+                              padding: 6px 0;
+                              color: #71717a;
+                              font-size: 13px;
+                              width: 100px;
+                            "
+                          >
+                            Fare
+                          </td>
+                          <td
+                            style="
+                              padding: 6px 0;
+                              color: #09090b;
+                              font-size: 13px;
+                              font-weight: 500;
+                            "
+                          >
+                            ₦{{fare}}
+                          </td>
+                        </tr>
+                      </table>
+                    </td>
+                  </tr>
+                </table>
+              </td>
+            </tr>
+            <!-- Warning notice -->
+            <tr>
+              <td style="padding: 20px 40px 0">
+                <table
+                  cellpadding="0"
+                  cellspacing="0"
+                  border="0"
+                  width="100%"
+                  style="background-color: #fffbeb; border-radius: 10px"
+                >
+                  <tr>
+                    <td style="padding: 16px 20px">
+                      <p
+                        style="
+                          margin: 0;
+                          color: #92400e;
+                          font-size: 13px;
+                          line-height: 1.5;
+                        "
+                      >
+                        ⚠️ Repeated missed rides may affect your account
+                        standing. Please cancel ahead of time if your plans
+                        change.
+                      </p>
+                    </td>
+                  </tr>
+                </table>
+              </td>
+            </tr>
+            <!-- CTA text -->
+            <tr>
+              <td style="padding: 24px 40px 0; text-align: center">
+                <p
+                  style="
+                    margin: 0;
+                    color: #71717a;
+                    font-size: 14px;
+                    line-height: 1.6;
+                  "
+                >
+                  No worries — you can always book another ride whenever you're
+                  ready.
+                </p>
+              </td>
+            </tr>
+            <!-- Footer -->
+            <tr>
+              <td style="padding: 36px 40px 32px; text-align: center">
+                <div
+                  style="
+                    height: 1px;
+                    background-color: #e4e4e7;
+                    margin-bottom: 24px;
+                  "
+                ></div>
+                <p style="margin: 0 0 4px; color: #a1a1aa; font-size: 12px">
                   Campus Ride-Hailing Made Easy
                 </p>
-                <p style="margin: 0; color: #adb5bd; font-size: 12px">
+                <p style="margin: 0; color: #d4d4d8; font-size: 11px">
                   © {{currentYear}} UniRide. All rights reserved.
                 </p>
               </td>

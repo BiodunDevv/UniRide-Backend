@@ -1,13 +1,44 @@
 const jwt = require("jsonwebtoken");
 const bcrypt = require("bcrypt");
 const User = require("../models/User");
+const Driver = require("../models/Driver");
 const NotificationSettings = require("../models/NotificationSettings");
+const UserNotification = require("../models/UserNotification");
 const { v4: uuidv4 } = require("uuid");
 const generateVerificationCode = require("../utils/generateVerificationCode");
 const {
   sendEmailVerificationCode,
   sendPasswordResetCode,
+  sendPinResetCode,
 } = require("../services/emailService");
+const { sendPushNotification } = require("../services/pushNotificationService");
+
+/**
+ * Helper: create in-app notification and optionally push
+ */
+const createSystemNotification = async (
+  user_id,
+  title,
+  message,
+  type = "system",
+  metadata = {},
+  sendPush = true,
+) => {
+  try {
+    await UserNotification.create({ user_id, title, message, type, metadata });
+    if (sendPush) {
+      sendPushNotification({
+        user_id,
+        title,
+        message,
+        data: metadata,
+        notificationType: type,
+      }).catch(() => {});
+    }
+  } catch (err) {
+    console.error("Failed to create system notification:", err.message);
+  }
+};
 
 /**
  * Generate JWT token
@@ -41,13 +72,28 @@ const generateToken = (id, device_id) => {
  *                 type: string
  *               password:
  *                 type: string
+ *               role:
+ *                 type: string
+ *                 enum: [user, driver]
+ *                 default: user
  *     responses:
  *       201:
  *         description: User registered successfully, verification code sent
  */
 const register = async (req, res, next) => {
   try {
-    const { name, email, password } = req.body;
+    const { name, email, password, role } = req.body;
+
+    // Validate role — only user and driver can self-register
+    const allowedRoles = ["user", "driver"];
+    const assignedRole = role && allowedRoles.includes(role) ? role : "user";
+
+    if (role && !allowedRoles.includes(role)) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid role. Only 'user' and 'driver' roles can register.",
+      });
+    }
 
     // Check if user exists
     const existingUser = await User.findOne({ email });
@@ -67,7 +113,7 @@ const register = async (req, res, next) => {
       name,
       email,
       password,
-      role: "user",
+      role: assignedRole,
       email_verified: false,
       email_verification_code: verificationCode,
       email_verification_expires: verificationExpires,
@@ -144,13 +190,17 @@ const register = async (req, res, next) => {
  *                 type: string
  *               device_id:
  *                 type: string
+ *               platform:
+ *                 type: string
+ *                 enum: [mobile, web]
+ *                 description: The platform the user is logging in from
  *     responses:
  *       200:
  *         description: Login successful
  */
 const login = async (req, res, next) => {
   try {
-    const { email, password, device_id } = req.body;
+    const { email, password, device_id, platform } = req.body;
 
     // Validate input
     if (!email || !password || !device_id) {
@@ -167,6 +217,50 @@ const login = async (req, res, next) => {
         success: false,
         message: "Invalid credentials",
       });
+    }
+
+    // Platform-based role enforcement
+    const userRole = user.role;
+    const loginPlatform = platform || "web";
+
+    if (
+      loginPlatform === "web" &&
+      userRole !== "admin" &&
+      userRole !== "super_admin"
+    ) {
+      return res.status(403).json({
+        success: false,
+        message:
+          "Access denied. Only administrators can sign in to the web portal.",
+        platform_restricted: true,
+      });
+    }
+
+    if (
+      loginPlatform === "mobile" &&
+      (userRole === "admin" || userRole === "super_admin")
+    ) {
+      return res.status(403).json({
+        success: false,
+        message: "Access denied. Admin accounts must use the web portal.",
+        platform_restricted: true,
+      });
+    }
+
+    // Role mismatch enforcement (mobile only)
+    // If the client sends a specific role, verify it matches the user's actual role
+    const requestedRole = req.body.role;
+    if (loginPlatform === "mobile" && requestedRole) {
+      if (requestedRole !== userRole) {
+        const roleLabel = requestedRole === "driver" ? "driver" : "rider";
+        const actualLabel = userRole === "driver" ? "driver" : "rider";
+        return res.status(403).json({
+          success: false,
+          message: `This account is registered as a ${actualLabel}. Please sign in with the ${actualLabel} option instead.`,
+          role_mismatch: true,
+          expected_role: userRole,
+        });
+      }
     }
 
     // Check if email is verified - auto-resend code if not
@@ -197,6 +291,7 @@ const login = async (req, res, next) => {
       return res.status(403).json({
         success: false,
         message: "Your account has been flagged. Please contact support.",
+        is_flagged: true,
       });
     }
 
@@ -220,7 +315,7 @@ const login = async (req, res, next) => {
 
     // Check if device already exists
     const existingDeviceIndex = user.devices.findIndex(
-      (d) => d.device_id === device_id
+      (d) => d.device_id === device_id,
     );
 
     if (existingDeviceIndex !== -1) {
@@ -260,6 +355,16 @@ const login = async (req, res, next) => {
     // Generate token with device_id
     const token = generateToken(user._id, device_id);
 
+    // Create login notification
+    createSystemNotification(
+      user._id,
+      "New Sign In",
+      `You signed in from ${req.body.device_name || "a device"} at ${new Date().toLocaleString()}.`,
+      "security",
+      { action: "login", device_name: req.body.device_name || "Unknown" },
+      false,
+    );
+
     res.status(200).json({
       success: true,
       message: "Login successful",
@@ -270,6 +375,7 @@ const login = async (req, res, next) => {
           email: user.email,
           role: user.role,
           biometric_enabled: user.biometric_enabled,
+          pin_enabled: user.pin_enabled,
           first_login: user.first_login,
         },
         token,
@@ -343,7 +449,7 @@ const biometricAuth = async (req, res, next) => {
     // Update last login for the device
     if (deviceExists) {
       const deviceIndex = user.devices.findIndex(
-        (d) => d.device_id === device_id
+        (d) => d.device_id === device_id,
       );
       user.devices[deviceIndex].last_login = new Date();
       await user.save();
@@ -361,6 +467,8 @@ const biometricAuth = async (req, res, next) => {
           name: user.name,
           email: user.email,
           role: user.role,
+          biometric_enabled: user.biometric_enabled,
+          pin_enabled: user.pin_enabled,
         },
         token,
       },
@@ -484,6 +592,15 @@ const changePassword = async (req, res, next) => {
     user.first_login = false;
     await user.save();
 
+    // Create security notification
+    await createSystemNotification(
+      user._id,
+      "Password Changed",
+      "Your password was changed successfully. If you didn't make this change, please contact support immediately.",
+      "security",
+      { action: "password_changed" },
+    );
+
     res.status(200).json({
       success: true,
       message: "Password changed successfully",
@@ -511,6 +628,16 @@ const enableBiometric = async (req, res, next) => {
 
     user.biometric_enabled = true;
     await user.save();
+
+    // Create security notification
+    await createSystemNotification(
+      user._id,
+      "Biometric Enabled",
+      "Biometric authentication has been enabled on your account.",
+      "security",
+      { action: "biometric_enabled" },
+      false,
+    );
 
     res.status(200).json({
       success: true,
@@ -540,8 +667,67 @@ const getMe = async (req, res, next) => {
   try {
     const user = await User.findById(req.user._id);
 
+    const response = { ...user.toJSON() };
+
+    // If the user is a driver, include driver profile data
+    if (user.role === "driver") {
+      const driver = await Driver.findOne({ user_id: user._id });
+      if (driver) {
+        response.driver = driver.toJSON();
+      }
+    }
+
     res.status(200).json({
       success: true,
+      data: response,
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * @swagger
+ * /api/auth/profile:
+ *   patch:
+ *     summary: Update user profile (name and profile picture)
+ *     tags: [Auth]
+ *     security:
+ *       - bearerAuth: []
+ *     requestBody:
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             properties:
+ *               name:
+ *                 type: string
+ *               profile_picture:
+ *                 type: string
+ *                 description: Cloudinary URL for profile picture
+ *     responses:
+ *       200:
+ *         description: Profile updated successfully
+ */
+const updateProfile = async (req, res, next) => {
+  try {
+    const { name, profile_picture } = req.body;
+
+    const user = await User.findById(req.user._id);
+    if (!user) {
+      return res
+        .status(404)
+        .json({ success: false, message: "User not found" });
+    }
+
+    if (name && name.trim()) user.name = name.trim();
+    if (profile_picture !== undefined) user.profile_picture = profile_picture;
+
+    await user.save();
+
+    res.status(200).json({
+      success: true,
+      message: "Profile updated successfully",
       data: user,
     });
   } catch (error) {
@@ -578,7 +764,7 @@ const verifyEmail = async (req, res, next) => {
     const { email, code } = req.body;
 
     const user = await User.findOne({ email }).select(
-      "+email_verification_code +email_verification_expires"
+      "+email_verification_code +email_verification_expires",
     );
 
     if (!user) {
@@ -621,6 +807,15 @@ const verifyEmail = async (req, res, next) => {
     user.email_verification_code = undefined;
     user.email_verification_expires = undefined;
     await user.save();
+
+    // Create system notification
+    await createSystemNotification(
+      user._id,
+      "Email Verified",
+      "Your email address has been successfully verified. Welcome to UniRide!",
+      "account",
+      { action: "email_verified" },
+    );
 
     // Generate token (no device_id for email verification)
     const token = generateToken(user._id, null);
@@ -814,7 +1009,7 @@ const resetPassword = async (req, res, next) => {
     const { email, code, newPassword } = req.body;
 
     const user = await User.findOne({ email }).select(
-      "+password_reset_code +password_reset_expires +password"
+      "+password_reset_code +password_reset_expires +password",
     );
 
     if (!user) {
@@ -850,6 +1045,15 @@ const resetPassword = async (req, res, next) => {
     user.password_reset_code = undefined;
     user.password_reset_expires = undefined;
     await user.save();
+
+    // Create security notification
+    await createSystemNotification(
+      user._id,
+      "Password Reset",
+      "Your password was reset successfully via email verification.",
+      "security",
+      { action: "password_reset" },
+    );
 
     res.status(200).json({
       success: true,
@@ -984,7 +1188,7 @@ const logoutAllDevices = async (req, res, next) => {
     if (except_current && current_device_id) {
       // Keep only the current device
       user.devices = user.devices.filter(
-        (d) => d.device_id === current_device_id
+        (d) => d.device_id === current_device_id,
       );
     } else {
       // Remove all devices
@@ -1008,6 +1212,706 @@ const logoutAllDevices = async (req, res, next) => {
   }
 };
 
+/**
+ * @swagger
+ * /api/auth/disable-biometric:
+ *   patch:
+ *     summary: Disable biometric authentication
+ *     tags: [Auth]
+ *     security:
+ *       - bearerAuth: []
+ *     responses:
+ *       200:
+ *         description: Biometric disabled successfully
+ */
+const disableBiometric = async (req, res, next) => {
+  try {
+    const user = await User.findById(req.user._id);
+    user.biometric_enabled = false;
+    await user.save();
+
+    // Create security notification
+    await createSystemNotification(
+      user._id,
+      "Biometric Disabled",
+      "Biometric authentication has been disabled on your account.",
+      "security",
+      { action: "biometric_disabled" },
+      false,
+    );
+
+    res.status(200).json({
+      success: true,
+      message: "Biometric authentication disabled",
+      data: { biometric_enabled: false },
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * @swagger
+ * /api/auth/notifications:
+ *   get:
+ *     summary: Get user notifications
+ *     tags: [Auth - Notifications]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: query
+ *         name: limit
+ *         schema:
+ *           type: integer
+ *           default: 30
+ *       - in: query
+ *         name: is_read
+ *         schema:
+ *           type: boolean
+ *     responses:
+ *       200:
+ *         description: User notifications
+ */
+const getUserNotifications = async (req, res, next) => {
+  try {
+    const { limit = 30, is_read } = req.query;
+    const query = { user_id: req.user._id };
+    if (is_read !== undefined) query.is_read = is_read === "true";
+
+    const notifications = await UserNotification.find(query)
+      .sort({ createdAt: -1 })
+      .limit(parseInt(limit));
+
+    const unread_count = await UserNotification.countDocuments({
+      user_id: req.user._id,
+      is_read: false,
+    });
+
+    res.status(200).json({
+      success: true,
+      data: notifications,
+      unread_count,
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * @swagger
+ * /api/auth/notifications/{id}/read:
+ *   patch:
+ *     summary: Mark a notification as read
+ *     tags: [Auth - Notifications]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: string
+ *     responses:
+ *       200:
+ *         description: Notification marked as read
+ */
+const markUserNotificationRead = async (req, res, next) => {
+  try {
+    const notification = await UserNotification.findOneAndUpdate(
+      { _id: req.params.id, user_id: req.user._id },
+      { is_read: true },
+      { new: true },
+    );
+    if (!notification) {
+      return res
+        .status(404)
+        .json({ success: false, message: "Notification not found" });
+    }
+    res.status(200).json({ success: true, data: notification });
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * @swagger
+ * /api/auth/notifications/mark-all-read:
+ *   patch:
+ *     summary: Mark all user notifications as read
+ *     tags: [Auth - Notifications]
+ *     security:
+ *       - bearerAuth: []
+ *     responses:
+ *       200:
+ *         description: All notifications marked as read
+ */
+const markAllUserNotificationsRead = async (req, res, next) => {
+  try {
+    await UserNotification.updateMany(
+      { user_id: req.user._id, is_read: false },
+      { is_read: true },
+    );
+    res
+      .status(200)
+      .json({ success: true, message: "All notifications marked as read" });
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * @swagger
+ * /api/auth/notifications/{id}:
+ *   get:
+ *     summary: Get notification detail by ID
+ *     tags: [Auth - Notifications]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: string
+ *     responses:
+ *       200:
+ *         description: Notification details
+ */
+const getNotificationDetail = async (req, res, next) => {
+  try {
+    const notification = await UserNotification.findOne({
+      _id: req.params.id,
+      user_id: req.user._id,
+    });
+
+    if (!notification) {
+      return res
+        .status(404)
+        .json({ success: false, message: "Notification not found" });
+    }
+
+    // Auto mark as read
+    if (!notification.is_read) {
+      notification.is_read = true;
+      await notification.save();
+    }
+
+    res.status(200).json({ success: true, data: notification });
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * @swagger
+ * /api/auth/notifications:
+ *   delete:
+ *     summary: Clear all notifications for current user
+ *     tags: [Auth - Notifications]
+ *     security:
+ *       - bearerAuth: []
+ *     responses:
+ *       200:
+ *         description: All notifications cleared
+ */
+const clearAllUserNotifications = async (req, res, next) => {
+  try {
+    const result = await UserNotification.deleteMany({
+      user_id: req.user._id,
+    });
+    res.status(200).json({
+      success: true,
+      message: "All notifications cleared",
+      deleted_count: result.deletedCount,
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// ─── PIN Login Endpoints ────────────────────────────────────────────────────
+
+/**
+ * @swagger
+ * /api/auth/pin/setup:
+ *   post:
+ *     summary: Set up a 4-digit PIN for quick login
+ *     tags: [Auth - Security]
+ *     security:
+ *       - bearerAuth: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - pin
+ *               - password
+ *             properties:
+ *               pin:
+ *                 type: string
+ *                 minLength: 4
+ *                 maxLength: 4
+ *                 description: 4-digit PIN
+ *               password:
+ *                 type: string
+ *                 description: Current password for verification
+ *     responses:
+ *       200:
+ *         description: PIN set up successfully
+ */
+const setupPin = async (req, res, next) => {
+  try {
+    const { pin, password } = req.body;
+
+    if (!pin || !password) {
+      return res.status(400).json({
+        success: false,
+        message: "PIN and current password are required",
+      });
+    }
+
+    if (!/^\d{4}$/.test(pin)) {
+      return res.status(400).json({
+        success: false,
+        message: "PIN must be exactly 4 digits",
+      });
+    }
+
+    const user = await User.findById(req.user._id).select("+password");
+
+    // Verify current password
+    const isMatch = await user.comparePassword(password);
+    if (!isMatch) {
+      return res.status(401).json({
+        success: false,
+        message: "Current password is incorrect",
+      });
+    }
+
+    // Hash PIN
+    const salt = await bcrypt.genSalt(10);
+    user.pin_hash = await bcrypt.hash(pin, salt);
+    user.pin_enabled = true;
+    await user.save();
+
+    await createSystemNotification(
+      user._id,
+      "PIN Login Enabled",
+      "A 4-digit PIN has been set up for quick sign-in on your account.",
+      "security",
+      { action: "pin_enabled" },
+      false,
+    );
+
+    res.status(200).json({
+      success: true,
+      message: "PIN set up successfully",
+      data: { pin_enabled: true },
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * @swagger
+ * /api/auth/pin/update:
+ *   patch:
+ *     summary: Update your 4-digit PIN
+ *     tags: [Auth - Security]
+ *     security:
+ *       - bearerAuth: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - current_pin
+ *               - new_pin
+ *             properties:
+ *               current_pin:
+ *                 type: string
+ *               new_pin:
+ *                 type: string
+ *     responses:
+ *       200:
+ *         description: PIN updated successfully
+ */
+const updatePin = async (req, res, next) => {
+  try {
+    const { current_pin, new_pin } = req.body;
+
+    if (!current_pin || !new_pin) {
+      return res.status(400).json({
+        success: false,
+        message: "Current PIN and new PIN are required",
+      });
+    }
+
+    if (!/^\d{4}$/.test(new_pin)) {
+      return res.status(400).json({
+        success: false,
+        message: "New PIN must be exactly 4 digits",
+      });
+    }
+
+    const user = await User.findById(req.user._id).select("+pin_hash");
+
+    if (!user.pin_enabled || !user.pin_hash) {
+      return res.status(400).json({
+        success: false,
+        message: "PIN login is not enabled. Set up a PIN first.",
+      });
+    }
+
+    const pinMatch = await bcrypt.compare(current_pin, user.pin_hash);
+    if (!pinMatch) {
+      return res.status(401).json({
+        success: false,
+        message: "Current PIN is incorrect",
+      });
+    }
+
+    const salt = await bcrypt.genSalt(10);
+    user.pin_hash = await bcrypt.hash(new_pin, salt);
+    await user.save();
+
+    await createSystemNotification(
+      user._id,
+      "PIN Updated",
+      "Your login PIN has been changed successfully.",
+      "security",
+      { action: "pin_updated" },
+      false,
+    );
+
+    res.status(200).json({
+      success: true,
+      message: "PIN updated successfully",
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * @swagger
+ * /api/auth/pin/remove:
+ *   delete:
+ *     summary: Remove PIN login
+ *     tags: [Auth - Security]
+ *     security:
+ *       - bearerAuth: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - password
+ *             properties:
+ *               password:
+ *                 type: string
+ *                 description: Current password for verification
+ *     responses:
+ *       200:
+ *         description: PIN removed successfully
+ */
+const removePin = async (req, res, next) => {
+  try {
+    const { password } = req.body;
+
+    if (!password) {
+      return res.status(400).json({
+        success: false,
+        message: "Password is required to remove PIN",
+      });
+    }
+
+    const user = await User.findById(req.user._id).select("+password");
+
+    const isMatch = await user.comparePassword(password);
+    if (!isMatch) {
+      return res.status(401).json({
+        success: false,
+        message: "Password is incorrect",
+      });
+    }
+
+    user.pin_hash = undefined;
+    user.pin_enabled = false;
+    await user.save();
+
+    await createSystemNotification(
+      user._id,
+      "PIN Login Removed",
+      "PIN login has been removed from your account.",
+      "security",
+      { action: "pin_removed" },
+      false,
+    );
+
+    res.status(200).json({
+      success: true,
+      message: "PIN removed successfully",
+      data: { pin_enabled: false },
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * @swagger
+ * /api/auth/pin/login:
+ *   post:
+ *     summary: Login with 4-digit PIN (for returning authenticated users)
+ *     tags: [Auth - Security]
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - user_id
+ *               - device_id
+ *               - pin
+ *             properties:
+ *               user_id:
+ *                 type: string
+ *               device_id:
+ *                 type: string
+ *               pin:
+ *                 type: string
+ *     responses:
+ *       200:
+ *         description: PIN login successful
+ */
+const pinLogin = async (req, res, next) => {
+  try {
+    const { user_id, device_id, pin } = req.body;
+
+    if (!user_id || !device_id || !pin) {
+      return res.status(400).json({
+        success: false,
+        message: "user_id, device_id, and pin are required",
+      });
+    }
+
+    const user = await User.findById(user_id).select("+pin_hash");
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: "User not found",
+      });
+    }
+
+    if (!user.pin_enabled || !user.pin_hash) {
+      return res.status(403).json({
+        success: false,
+        message: "PIN login is not enabled for this account",
+      });
+    }
+
+    // Check device
+    const deviceExists = user.devices.some((d) => d.device_id === device_id);
+    if (!deviceExists && user.device_id !== device_id) {
+      return res.status(403).json({
+        success: false,
+        message: "Device not recognized. Please login with password.",
+      });
+    }
+
+    // Verify PIN
+    const pinMatch = await bcrypt.compare(pin, user.pin_hash);
+    if (!pinMatch) {
+      return res.status(401).json({
+        success: false,
+        message: "Incorrect PIN",
+      });
+    }
+
+    // Update last login
+    if (deviceExists) {
+      const idx = user.devices.findIndex((d) => d.device_id === device_id);
+      user.devices[idx].last_login = new Date();
+      await user.save();
+    }
+
+    const token = generateToken(user._id, device_id);
+
+    res.status(200).json({
+      success: true,
+      message: "PIN login successful",
+      data: {
+        user: {
+          id: user._id,
+          name: user.name,
+          email: user.email,
+          role: user.role,
+          biometric_enabled: user.biometric_enabled,
+          pin_enabled: user.pin_enabled,
+        },
+        token,
+      },
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * @swagger
+ * /api/auth/pin/forgot:
+ *   post:
+ *     summary: Request a 6-digit code to reset PIN (sent to email)
+ *     tags: [Auth - Security]
+ *     security:
+ *       - bearerAuth: []
+ *     responses:
+ *       200:
+ *         description: PIN reset code sent to email
+ */
+const forgotPin = async (req, res, next) => {
+  try {
+    const user = await User.findById(req.user._id).select(
+      "+pin_reset_code +pin_reset_expires",
+    );
+
+    if (!user.pin_enabled) {
+      return res.status(400).json({
+        success: false,
+        message: "PIN login is not enabled on this account",
+      });
+    }
+
+    const code = generateVerificationCode();
+    user.pin_reset_code = code;
+    user.pin_reset_expires = new Date(Date.now() + 10 * 60 * 1000); // 10 mins
+    await user.save();
+
+    await sendPinResetCode({
+      name: user.name,
+      email: user.email,
+      code,
+      subject: "Reset Your PIN - UniRide",
+    });
+
+    res.status(200).json({
+      success: true,
+      message: "A 6-digit PIN reset code has been sent to your email",
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * @swagger
+ * /api/auth/pin/reset:
+ *   post:
+ *     summary: Reset PIN using a 6-digit code from email
+ *     tags: [Auth - Security]
+ *     security:
+ *       - bearerAuth: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - code
+ *               - new_pin
+ *             properties:
+ *               code:
+ *                 type: string
+ *                 description: 6-digit code sent to email
+ *               new_pin:
+ *                 type: string
+ *                 description: New 4-digit PIN
+ *     responses:
+ *       200:
+ *         description: PIN reset successfully
+ */
+const resetPin = async (req, res, next) => {
+  try {
+    const { code, new_pin } = req.body;
+
+    if (!code || !new_pin) {
+      return res.status(400).json({
+        success: false,
+        message: "Code and new_pin are required",
+      });
+    }
+
+    if (!/^\d{4}$/.test(new_pin)) {
+      return res.status(400).json({
+        success: false,
+        message: "PIN must be exactly 4 digits",
+      });
+    }
+
+    const user = await User.findById(req.user._id).select(
+      "+pin_reset_code +pin_reset_expires +pin_hash",
+    );
+
+    if (!user.pin_reset_code || !user.pin_reset_expires) {
+      return res.status(400).json({
+        success: false,
+        message: "No PIN reset request found. Please request a new code.",
+      });
+    }
+
+    if (new Date() > user.pin_reset_expires) {
+      user.pin_reset_code = undefined;
+      user.pin_reset_expires = undefined;
+      await user.save();
+      return res.status(400).json({
+        success: false,
+        message: "Reset code has expired. Please request a new one.",
+      });
+    }
+
+    if (user.pin_reset_code !== code) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid reset code",
+      });
+    }
+
+    const salt = await bcrypt.genSalt(10);
+    user.pin_hash = await bcrypt.hash(new_pin, salt);
+    user.pin_enabled = true;
+    user.pin_reset_code = undefined;
+    user.pin_reset_expires = undefined;
+    await user.save();
+
+    await createSystemNotification(
+      user._id,
+      "PIN Reset",
+      "Your login PIN has been reset successfully.",
+      "security",
+      { action: "pin_reset" },
+      false,
+    );
+
+    res.status(200).json({
+      success: true,
+      message: "PIN has been reset successfully",
+      data: { pin_enabled: true },
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
 module.exports = {
   register,
   verifyEmail,
@@ -1019,8 +1923,21 @@ module.exports = {
   logout,
   changePassword,
   enableBiometric,
+  disableBiometric,
   getMe,
+  updateProfile,
   getDevices,
   removeDevice,
   logoutAllDevices,
+  getUserNotifications,
+  markUserNotificationRead,
+  markAllUserNotificationsRead,
+  getNotificationDetail,
+  clearAllUserNotifications,
+  setupPin,
+  updatePin,
+  removePin,
+  pinLogin,
+  forgotPin,
+  resetPin,
 };

@@ -22,7 +22,7 @@ const processTemplate = (template, variables) => {
     /{{#if\s+(\w+)}}([\s\S]*?){{\/if}}/g,
     (match, condition, content) => {
       return variables[condition] ? content : "";
-    }
+    },
   );
 
   return processed;
@@ -35,7 +35,7 @@ const sendEmailVerificationCode = async (userData) => {
   try {
     const templatePath = path.join(
       __dirname,
-      "../emails/emailVerification.html"
+      "../emails/emailVerification.html",
     );
     const template = await fs.readFile(templatePath, "utf-8");
 
@@ -88,12 +88,12 @@ const sendDriverApplicationReceivedEmail = async (driverData) => {
   try {
     const templatePath = path.join(
       __dirname,
-      "../emails/driverApplicationReceived.html"
+      "../emails/driverApplicationReceived.html",
     );
     const template = await fs.readFile(templatePath, "utf-8");
 
     const htmlContent = processTemplate(template, {
-      driverName: driverData.name,
+      userName: driverData.name,
       applicationId: driverData.applicationId,
       currentYear: new Date().getFullYear(),
     });
@@ -106,7 +106,7 @@ const sendDriverApplicationReceivedEmail = async (driverData) => {
   } catch (error) {
     console.error(
       "Error sending driver application received email:",
-      error.message
+      error.message,
     );
     throw error;
   }
@@ -124,6 +124,7 @@ const sendDriverApprovalEmail = async (driverData) => {
       driverName: driverData.name,
       email: driverData.email,
       temporaryPassword: driverData.temporaryPassword,
+      isNewAccount: driverData.isNewAccount,
       currentYear: new Date().getFullYear(),
     });
 
@@ -170,7 +171,7 @@ const sendRideConfirmationEmail = async (bookingData) => {
   try {
     const templatePath = path.join(
       __dirname,
-      "../emails/rideConfirmation.html"
+      "../emails/rideConfirmation.html",
     );
     const template = await fs.readFile(templatePath, "utf-8");
 
@@ -297,7 +298,7 @@ const sendBroadcastEmail = async (userData) => {
   try {
     const templatePath = path.join(
       __dirname,
-      "../emails/broadcastMessage.html"
+      "../emails/broadcastMessage.html",
     );
     const template = await fs.readFile(templatePath, "utf-8");
 
@@ -339,9 +340,41 @@ const sendBroadcastEmail = async (userData) => {
   }
 };
 
+/**
+ * Send PIN reset code email
+ */
+const sendPinResetCode = async (userData) => {
+  try {
+    const templatePath = path.join(__dirname, "../emails/pinReset.html");
+    const template = await fs.readFile(templatePath, "utf-8");
+
+    const code = String(userData.code);
+    const htmlContent = processTemplate(template, {
+      userName: userData.name,
+      digit1: code[0] || "0",
+      digit2: code[1] || "0",
+      digit3: code[2] || "0",
+      digit4: code[3] || "0",
+      digit5: code[4] || "0",
+      digit6: code[5] || "0",
+      currentYear: new Date().getFullYear(),
+    });
+
+    await sendEmail({
+      to: userData.email,
+      subject: userData.subject || "Reset Your PIN - UniRide",
+      htmlContent,
+    });
+  } catch (error) {
+    console.error("Error sending PIN reset code:", error.message);
+    throw error;
+  }
+};
+
 module.exports = {
   sendEmailVerificationCode,
   sendPasswordResetCode,
+  sendPinResetCode,
   sendDriverApplicationReceivedEmail,
   sendDriverApprovalEmail,
   sendDriverRejectionEmail,
