@@ -9,6 +9,7 @@ const SupportTicket = require("../models/SupportTicket");
 const BroadcastMessage = require("../models/BroadcastMessage");
 const NotificationSettings = require("../models/NotificationSettings");
 const UserNotification = require("../models/UserNotification");
+const Language = require("../models/Language");
 const {
   sendDriverApprovalEmail,
   sendDriverRejectionEmail,
@@ -18,7 +19,6 @@ const {
 const {
   sendNotificationToRole,
 } = require("../services/pushNotificationService");
-const bcrypt = require("bcrypt");
 
 /**
  * @swagger
@@ -315,15 +315,11 @@ const approveDriver = async (req, res, next) => {
       // Generate temporary password (first name)
       temporaryPassword = application.name.split(" ")[0];
 
-      // Hash password
-      const salt = await bcrypt.genSalt(10);
-      const hashedPassword = await bcrypt.hash(temporaryPassword, salt);
-
-      // Create user
+      // Create user (password will be hashed by the pre-save hook)
       user = await User.create({
         name: application.name,
         email: application.email,
-        password: hashedPassword,
+        password: temporaryPassword,
         role: "driver",
         email_verified: false,
         first_login: true,
@@ -926,15 +922,62 @@ const deleteAdmin = async (req, res, next) => {
     }
 
     if (force === "true") {
-      // Hard delete - permanently remove
-      await User.findByIdAndDelete(id);
+      // ── Full cascade purge — remove every trace from all collections ──
+      const userId = admin._id;
 
-      // Create notification for super admins about admin deletion
+      // Support tickets created by this admin + unassign from assigned tickets
+      await SupportTicket.deleteMany({ user_id: userId });
+      await SupportTicket.updateMany(
+        { assigned_to: userId },
+        { $set: { assigned_to: null, status: "open" } },
+      );
+      await SupportTicket.updateMany(
+        { "messages.sender_id": userId },
+        { $pull: { messages: { sender_id: userId } } },
+      );
+
+      // Notifications
+      await UserNotification.deleteMany({ user_id: userId });
+      await NotificationSettings.deleteMany({ user_id: userId });
+      await AdminNotification.deleteMany({
+        reference_id: userId,
+        reference_model: "User",
+      });
+      await AdminNotification.updateMany(
+        {},
+        { $pull: { read_by: { admin_id: userId } } },
+      );
+
+      // Broadcast messages sent by this admin
+      await BroadcastMessage.deleteMany({ sent_by: userId });
+
+      // Fare policy — nullify updated_by references
+      await FarePolicy.updateMany(
+        { updated_by: userId },
+        { $set: { updated_by: null } },
+      );
+
+      // Driver application reviews by this admin — nullify reviewer
+      await DriverApplication.updateMany(
+        { reviewed_by: userId },
+        { $set: { reviewed_by: null } },
+      );
+
+      // Driver approved_by — nullify
+      await Driver.updateMany(
+        { approved_by: userId },
+        { $set: { approved_by: null } },
+      );
+
+      // Finally delete the user record
+      await User.findByIdAndDelete(userId);
+
+      // Notify remaining admins
       try {
         await AdminNotification.create({
           type: "system_alert",
-          title: "Admin Account Deleted",
-          message: `${req.user.name} permanently deleted admin account: ${admin.name} (${admin.email})`,
+          title: "Admin Account Permanently Deleted",
+          message: `${req.user.name} permanently deleted admin account: ${admin.name} (${admin.email}) — all associated data purged`,
           priority: "urgent",
           metadata: {
             deleted_admin_name: admin.name,
@@ -954,14 +997,13 @@ const deleteAdmin = async (req, res, next) => {
 
       return res.status(200).json({
         success: true,
-        message: "Admin permanently deleted",
+        message: "Admin permanently deleted — all traces removed from database",
       });
     } else {
-      // Soft delete - flag the admin
+      // Soft delete — flag the admin
       admin.is_flagged = true;
       await admin.save();
 
-      // Create notification for super admins about admin flagging
       try {
         await AdminNotification.create({
           type: "system_alert",
@@ -1041,15 +1083,43 @@ const deleteUser = async (req, res, next) => {
     }
 
     if (force === "true") {
-      // Hard delete - permanently remove
-      await User.findByIdAndDelete(id);
+      // ── Full cascade purge — remove every trace from all collections ──
+      const userId = user._id;
 
-      // Create notification about user deletion
+      // Bookings made by this user
+      await Booking.deleteMany({ user_id: userId });
+
+      // Support tickets created by this user
+      await SupportTicket.deleteMany({ user_id: userId });
+      // Remove their messages from tickets they participated in
+      await SupportTicket.updateMany(
+        { "messages.sender_id": userId },
+        { $pull: { messages: { sender_id: userId } } },
+      );
+
+      // Notifications & settings
+      await UserNotification.deleteMany({ user_id: userId });
+      await NotificationSettings.deleteMany({ user_id: userId });
+
+      // Admin notifications referencing this user
+      await AdminNotification.deleteMany({
+        reference_id: userId,
+        reference_model: "User",
+      });
+
+      // Driver application (in case they applied but weren't approved)
+      await DriverApplication.deleteMany({ user_id: userId });
+
+      // Remove user from ride_history references (unlikely but clean)
+      // and delete the user record
+      await User.findByIdAndDelete(userId);
+
+      // Notify admins
       try {
         await AdminNotification.create({
           type: "user_report",
-          title: "User Account Deleted",
-          message: `${req.user.name} permanently deleted user account: ${user.name} (${user.email})`,
+          title: "User Account Permanently Deleted",
+          message: `${req.user.name} permanently deleted user: ${user.name} (${user.email}) — all associated data purged`,
           priority: "medium",
           metadata: {
             user_name: user.name,
@@ -1068,14 +1138,13 @@ const deleteUser = async (req, res, next) => {
 
       return res.status(200).json({
         success: true,
-        message: "User permanently deleted",
+        message: "User permanently deleted — all traces removed from database",
       });
     } else {
-      // Soft delete - flag the user
+      // Soft delete — flag the user
       user.is_flagged = true;
       await user.save();
 
-      // Create notification about user flagging
       try {
         await AdminNotification.create({
           type: "user_report",
@@ -1146,30 +1215,76 @@ const deleteDriver = async (req, res, next) => {
     }
 
     if (force === "true") {
-      // Hard delete - permanently remove driver, delete application, and update user role
-      const driverEmail = driver.user_id.email;
+      // ── Full cascade purge — remove every trace from all collections ──
+      const userId = driver.user_id?._id;
+      const driverId = driver._id;
+      const driverName = driver.user_id?.name || "Unknown";
+      const driverEmail = driver.user_id?.email || "Unknown";
 
-      // Delete the driver profile
-      await Driver.findByIdAndDelete(id);
+      // All rides by this driver + their bookings
+      const rideIds = (
+        await Ride.find({ driver_id: driverId }).select("_id")
+      ).map((r) => r._id);
+      if (rideIds.length > 0) {
+        await Booking.deleteMany({ ride_id: { $in: rideIds } });
+        await Ride.deleteMany({ driver_id: driverId });
+      }
 
-      // Delete all driver applications associated with this email (so they can reapply)
+      // Bookings made by this user (as a passenger too)
+      if (userId) {
+        await Booking.deleteMany({ user_id: userId });
+      }
+
+      // Driver applications
       await DriverApplication.deleteMany({ email: driverEmail });
+      if (userId) {
+        await DriverApplication.deleteMany({ user_id: userId });
+      }
 
-      // Revert user role to regular user
-      await User.findByIdAndUpdate(driver.user_id._id, { role: "user" });
+      // Support tickets created by the driver user
+      if (userId) {
+        await SupportTicket.deleteMany({ user_id: userId });
+        await SupportTicket.updateMany(
+          { assigned_to: userId },
+          { $set: { assigned_to: null, status: "open" } },
+        );
+        await SupportTicket.updateMany(
+          { "messages.sender_id": userId },
+          { $pull: { messages: { sender_id: userId } } },
+        );
+      }
 
-      // Create notification about driver deletion
+      // Notifications & settings
+      if (userId) {
+        await UserNotification.deleteMany({ user_id: userId });
+        await NotificationSettings.deleteMany({ user_id: userId });
+        await AdminNotification.deleteMany({
+          reference_id: userId,
+          reference_model: "User",
+        });
+      }
+
+      // Delete driver profile
+      await Driver.findByIdAndDelete(driverId);
+
+      // Delete the user account entirely
+      if (userId) {
+        await User.findByIdAndDelete(userId);
+      }
+
+      // Notify admins
       try {
         await AdminNotification.create({
           type: "system_alert",
-          title: "Driver Account Deleted",
-          message: `${req.user.name} permanently deleted driver: ${driver.user_id.name} (${driver.user_id.email})`,
+          title: "Driver Account Permanently Deleted",
+          message: `${req.user.name} permanently deleted driver: ${driverName} (${driverEmail}) — all associated data purged (rides, bookings, applications, tickets)`,
           priority: "high",
           metadata: {
-            driver_name: driver.user_id.name,
-            driver_email: driver.user_id.email,
+            driver_name: driverName,
+            driver_email: driverEmail,
             vehicle: driver.vehicle_model,
             plate_number: driver.plate_number,
+            rides_deleted: rideIds.length,
             deleted_by: req.user.name,
             deleted_by_id: req.user._id,
             action: "driver_hard_deleted",
@@ -1185,13 +1300,12 @@ const deleteDriver = async (req, res, next) => {
       return res.status(200).json({
         success: true,
         message:
-          "Driver permanently deleted, applications removed, and user role reverted to regular user. They can now reapply if desired.",
+          "Driver permanently deleted — all traces removed from database (user account, rides, bookings, applications, tickets, notifications)",
       });
     } else {
-      // Soft delete - flag the driver's user account
+      // Soft delete — flag the driver's user account
       await User.findByIdAndUpdate(driver.user_id._id, { is_flagged: true });
 
-      // Create notification about driver flagging
       try {
         await AdminNotification.create({
           type: "system_alert",
@@ -2453,6 +2567,305 @@ const resetDriverLicense = async (req, res, next) => {
   }
 };
 
+// ─── Audit Data Clearing (Super Admin) ────────────────────────────────────────
+
+/**
+ * @swagger
+ * /api/admin/audit/clear:
+ *   post:
+ *     summary: Clear audit/historical data (super admin only)
+ *     tags: [Admin]
+ *     security:
+ *       - bearerAuth: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - targets
+ *             properties:
+ *               targets:
+ *                 type: array
+ *                 items:
+ *                   type: string
+ *                   enum: [support_tickets, notifications, broadcasts, bookings, ride_history]
+ *               before_date:
+ *                 type: string
+ *                 format: date
+ *                 description: Only clear records created before this date
+ *     responses:
+ *       200:
+ *         description: Data cleared successfully
+ */
+const clearAuditData = async (req, res, next) => {
+  try {
+    const { targets, before_date } = req.body;
+
+    if (!targets || !Array.isArray(targets) || targets.length === 0) {
+      return res.status(400).json({
+        success: false,
+        message:
+          "Please specify which data to clear: support_tickets, notifications, broadcasts, bookings, ride_history",
+      });
+    }
+
+    const validTargets = [
+      "support_tickets",
+      "notifications",
+      "broadcasts",
+      "bookings",
+      "ride_history",
+    ];
+    const invalidTargets = targets.filter((t) => !validTargets.includes(t));
+    if (invalidTargets.length > 0) {
+      return res.status(400).json({
+        success: false,
+        message: `Invalid targets: ${invalidTargets.join(", ")}. Valid options: ${validTargets.join(", ")}`,
+      });
+    }
+
+    const dateFilter = before_date
+      ? { createdAt: { $lt: new Date(before_date) } }
+      : {};
+
+    // Only clear closed/resolved tickets, not active ones
+    const closedTicketFilter = {
+      ...dateFilter,
+      status: { $in: ["closed", "resolved"] },
+    };
+
+    const results = {};
+
+    for (const target of targets) {
+      switch (target) {
+        case "support_tickets": {
+          const deleted = await SupportTicket.deleteMany(closedTicketFilter);
+          results.support_tickets = deleted.deletedCount;
+          break;
+        }
+        case "notifications": {
+          const deleted = await AdminNotification.deleteMany(dateFilter);
+          const userNotifs = await UserNotification.deleteMany(dateFilter);
+          results.admin_notifications = deleted.deletedCount;
+          results.user_notifications = userNotifs.deletedCount;
+          break;
+        }
+        case "broadcasts": {
+          const deleted = await BroadcastMessage.deleteMany(dateFilter);
+          results.broadcasts = deleted.deletedCount;
+          break;
+        }
+        case "bookings": {
+          const bookingFilter = {
+            ...dateFilter,
+            status: { $in: ["completed", "cancelled"] },
+          };
+          const deleted = await Booking.deleteMany(bookingFilter);
+          results.bookings = deleted.deletedCount;
+          break;
+        }
+        case "ride_history": {
+          const rideFilter = {
+            ...dateFilter,
+            status: { $in: ["completed", "cancelled"] },
+          };
+          const deleted = await Ride.deleteMany(rideFilter);
+          results.rides = deleted.deletedCount;
+          break;
+        }
+      }
+    }
+
+    // Log the audit clear action
+    try {
+      await AdminNotification.create({
+        type: "system",
+        title: "Audit Data Cleared",
+        message: `${req.user.name} cleared audit data: ${targets.join(", ")}${before_date ? ` (before ${before_date})` : ""}`,
+        priority: "high",
+        metadata: {
+          cleared_by: req.user.name,
+          cleared_by_id: req.user._id,
+          targets,
+          before_date: before_date || null,
+          results,
+          action: "audit_data_cleared",
+        },
+      });
+    } catch (notifErr) {
+      console.error("Error creating audit notification:", notifErr.message);
+    }
+
+    res.status(200).json({
+      success: true,
+      message: "Audit data cleared successfully",
+      data: results,
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * @swagger
+ * /api/admin/audit/summary:
+ *   get:
+ *     summary: Get summary of clearable audit data
+ *     tags: [Admin]
+ *     security:
+ *       - bearerAuth: []
+ *     responses:
+ *       200:
+ *         description: Audit data summary
+ */
+const getAuditSummary = async (req, res, next) => {
+  try {
+    const [
+      closedTickets,
+      notifications,
+      userNotifications,
+      broadcasts,
+      completedBookings,
+      completedRides,
+    ] = await Promise.all([
+      SupportTicket.countDocuments({ status: { $in: ["closed", "resolved"] } }),
+      AdminNotification.countDocuments({}),
+      UserNotification.countDocuments({}),
+      BroadcastMessage.countDocuments({}),
+      Booking.countDocuments({ status: { $in: ["completed", "cancelled"] } }),
+      Ride.countDocuments({ status: { $in: ["completed", "cancelled"] } }),
+    ]);
+
+    res.status(200).json({
+      success: true,
+      data: {
+        support_tickets: closedTickets,
+        admin_notifications: notifications,
+        user_notifications: userNotifications,
+        broadcasts,
+        bookings: completedBookings,
+        rides: completedRides,
+      },
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// ─── Language Management (Admin) ──────────────────────────────────────────────
+
+const getLanguages = async (req, res, next) => {
+  try {
+    const languages = await Language.find({}).sort({ is_default: -1, name: 1 });
+    res.status(200).json({ success: true, data: languages });
+  } catch (error) {
+    next(error);
+  }
+};
+
+const addLanguage = async (req, res, next) => {
+  try {
+    const { code, name, native_name } = req.body;
+
+    if (!code || !name) {
+      return res.status(400).json({
+        success: false,
+        message: "Language code and name are required",
+      });
+    }
+
+    const exists = await Language.findOne({ code: code.toLowerCase() });
+    if (exists) {
+      return res.status(400).json({
+        success: false,
+        message: "This language already exists",
+      });
+    }
+
+    const language = await Language.create({
+      code: code.toLowerCase(),
+      name,
+      native_name: native_name || name,
+      added_by: req.user._id,
+    });
+
+    res.status(201).json({
+      success: true,
+      message: "Language added successfully",
+      data: language,
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+const updateLanguage = async (req, res, next) => {
+  try {
+    const { id } = req.params;
+    const { name, native_name, is_active } = req.body;
+
+    const language = await Language.findById(id);
+    if (!language) {
+      return res.status(404).json({
+        success: false,
+        message: "Language not found",
+      });
+    }
+
+    if (name) language.name = name;
+    if (native_name) language.native_name = native_name;
+    if (typeof is_active === "boolean") language.is_active = is_active;
+
+    await language.save();
+
+    res.status(200).json({
+      success: true,
+      message: "Language updated successfully",
+      data: language,
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+const deleteLanguage = async (req, res, next) => {
+  try {
+    const { id } = req.params;
+
+    const language = await Language.findById(id);
+    if (!language) {
+      return res.status(404).json({
+        success: false,
+        message: "Language not found",
+      });
+    }
+
+    if (language.is_default) {
+      return res.status(400).json({
+        success: false,
+        message: "Cannot delete the default language",
+      });
+    }
+
+    // Reset users who had this language to English
+    await User.updateMany(
+      { preferred_language: language.code },
+      { preferred_language: "en" },
+    );
+
+    await Language.findByIdAndDelete(id);
+
+    res.status(200).json({
+      success: true,
+      message: "Language deleted and affected users reset to English",
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
 module.exports = {
   createAdmin,
   getAllAdmins,
@@ -2481,4 +2894,10 @@ module.exports = {
   getBroadcastHistory,
   adminUpdateDriver,
   resetDriverLicense,
+  clearAuditData,
+  getAuditSummary,
+  getLanguages,
+  addLanguage,
+  updateLanguage,
+  deleteLanguage,
 };

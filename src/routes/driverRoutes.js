@@ -2,6 +2,7 @@ const express = require("express");
 const router = express.Router();
 const {
   applyAsDriver,
+  checkApplicationByEmail,
   getApplicationStatus,
   getDriverProfile,
   updateDriverProfile,
@@ -24,6 +25,7 @@ const { apiLimiter } = require("../middlewares/rateLimit");
 
 // Public routes
 router.post("/apply", apiLimiter, applyAsDriver);
+router.post("/check-status", apiLimiter, checkApplicationByEmail);
 router.get("/banks", getBankList);
 
 // Protected routes - authentication required

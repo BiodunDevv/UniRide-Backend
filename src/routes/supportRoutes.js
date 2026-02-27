@@ -1,8 +1,11 @@
 const express = require("express");
 const router = express.Router();
 const {
+  createPublicTicket,
+  trackTicket,
   createTicket,
   getMyTickets,
+  getMyAssignedTickets,
   getTicketById,
   addMessage,
   resolveTicket,
@@ -15,6 +18,11 @@ const {
 } = require("../controllers/supportController");
 const { protect } = require("../middlewares/authMiddleware");
 const authorize = require("../middlewares/roleMiddleware");
+const { apiLimiter } = require("../middlewares/rateLimit");
+
+// Public routes — no authentication required
+router.post("/tickets/public", apiLimiter, createPublicTicket);
+router.post("/tickets/track", apiLimiter, trackTicket);
 
 // User routes - accessible to all authenticated users
 router.post("/tickets/create", protect, createTicket);
@@ -28,7 +36,7 @@ router.patch(
   "/tickets/:id/resolve",
   protect,
   authorize("admin", "super_admin"),
-  resolveTicket
+  resolveTicket,
 );
 
 // Admin-only routes
@@ -36,31 +44,37 @@ router.get(
   "/admin/tickets",
   protect,
   authorize("admin", "super_admin"),
-  getAllTickets
+  getAllTickets,
+);
+router.get(
+  "/admin/tickets/mine",
+  protect,
+  authorize("admin", "super_admin"),
+  getMyAssignedTickets,
 );
 router.get(
   "/admin/tickets/available",
   protect,
   authorize("admin", "super_admin"),
-  getAvailableTickets
+  getAvailableTickets,
 );
 router.patch(
   "/admin/tickets/:id/accept",
   protect,
   authorize("admin", "super_admin"),
-  acceptTicket
+  acceptTicket,
 );
 router.patch(
   "/admin/tickets/:id/decline",
   protect,
   authorize("admin", "super_admin"),
-  declineTicket
+  declineTicket,
 );
 router.patch(
   "/admin/tickets/:id/priority",
   protect,
   authorize("admin", "super_admin"),
-  updatePriority
+  updatePriority,
 );
 
 module.exports = router;

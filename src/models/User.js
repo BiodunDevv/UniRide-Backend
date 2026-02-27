@@ -59,7 +59,6 @@ const userSchema = new mongoose.Schema(
     password: {
       type: String,
       required: [true, "Password is required"],
-      minlength: 6,
       select: false, // Don't return password by default
     },
     device_id: {
@@ -152,6 +151,11 @@ const userSchema = new mongoose.Schema(
     password_reset_expires: {
       type: Date,
       select: false,
+    },
+    preferred_language: {
+      type: String,
+      default: "en",
+      trim: true,
     },
   },
   {

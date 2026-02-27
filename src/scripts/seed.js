@@ -7,6 +7,7 @@ const Ride = require("../models/Ride");
 const Booking = require("../models/Booking");
 const FarePolicy = require("../models/FarePolicy");
 const NotificationSettings = require("../models/NotificationSettings");
+const Language = require("../models/Language");
 
 const seedDatabase = async () => {
   try {
@@ -30,8 +31,22 @@ const seedDatabase = async () => {
     await Booking.createCollection().catch(() => {});
     await FarePolicy.createCollection().catch(() => {});
     await NotificationSettings.createCollection().catch(() => {});
+    await Language.createCollection().catch(() => {});
 
     console.log("  ✅ Collections recreated with fresh indexes");
+
+    // 0. Seed default languages
+    console.log("🌐 Seeding default languages...");
+    const defaultLanguages = [
+      { code: "en", name: "English", native_name: "English", is_default: true },
+      { code: "yo", name: "Yoruba", native_name: "Yorùbá", is_default: false },
+      { code: "ha", name: "Hausa", native_name: "Hausa", is_default: false },
+      { code: "ig", name: "Igbo", native_name: "Igbo", is_default: false },
+    ];
+    for (const lang of defaultLanguages) {
+      await Language.create(lang);
+      console.log(`  ✅ Language: ${lang.name} (${lang.code})`);
+    }
 
     // 1. Create Super Admin from .env
     console.log("👑 Creating Super Admin...");

@@ -28,6 +28,9 @@ const {
   pinLogin,
   forgotPin,
   resetPin,
+  updateLanguagePreference,
+  translateUserText,
+  getAvailableLanguages,
 } = require("../controllers/authController");
 const { protect } = require("../middlewares/authMiddleware");
 const { authLimiter } = require("../middlewares/rateLimit");
@@ -83,5 +86,10 @@ router.delete("/notifications", protect, clearAllUserNotifications);
 router.get("/devices", protect, getDevices);
 router.delete("/devices/:device_id", protect, removeDevice);
 router.post("/devices/logout-all", protect, logoutAllDevices);
+
+// ── Language & Translation ──────────────────────────────────────────────────
+router.get("/languages", getAvailableLanguages);
+router.patch("/language", protect, updateLanguagePreference);
+router.post("/translate", protect, translateUserText);
 
 module.exports = router;

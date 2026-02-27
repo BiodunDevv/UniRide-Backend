@@ -28,6 +28,12 @@ const {
   getBroadcastHistory,
   adminUpdateDriver,
   resetDriverLicense,
+  clearAuditData,
+  getAuditSummary,
+  getLanguages,
+  addLanguage,
+  updateLanguage,
+  deleteLanguage,
 } = require("../controllers/adminController");
 const { protect } = require("../middlewares/authMiddleware");
 const authorize = require("../middlewares/roleMiddleware");
@@ -189,6 +195,36 @@ router.get(
   protect,
   authorize("admin", "super_admin"),
   getBroadcastHistory,
+);
+
+// Audit data clearing — super admin only
+router.get(
+  "/audit/summary",
+  protect,
+  authorize("super_admin"),
+  getAuditSummary,
+);
+router.post("/audit/clear", protect, authorize("super_admin"), clearAuditData);
+
+// Language management — super admin only
+router.get(
+  "/languages",
+  protect,
+  authorize("admin", "super_admin"),
+  getLanguages,
+);
+router.post("/languages", protect, authorize("super_admin"), addLanguage);
+router.patch(
+  "/languages/:id",
+  protect,
+  authorize("super_admin"),
+  updateLanguage,
+);
+router.delete(
+  "/languages/:id",
+  protect,
+  authorize("super_admin"),
+  deleteLanguage,
 );
 
 module.exports = router;

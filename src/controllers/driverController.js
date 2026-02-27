@@ -557,11 +557,37 @@ const updateVehicleImage = async (req, res, next) => {
  *             properties:
  *               account_number:
  *                 type: string
+ *                 description: 10-digit bank account number
+ *                 example: "0123456789"
  *               bank_code:
  *                 type: string
+ *                 description: Bank code from the /banks endpoint
+ *                 example: "058"
  *     responses:
  *       200:
  *         description: Account verified successfully
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                 message:
+ *                   type: string
+ *                 data:
+ *                   type: object
+ *                   properties:
+ *                     account_name:
+ *                       type: string
+ *                     account_number:
+ *                       type: string
+ *                     bank_id:
+ *                       type: number
+ *       400:
+ *         description: Invalid account number or could not verify
+ *       429:
+ *         description: Rate limited — too many requests
  */
 const verifyBankAccount = async (req, res, next) => {
   try {
@@ -599,6 +625,16 @@ const verifyBankAccount = async (req, res, next) => {
       },
     );
 
+    // Handle rate limiting
+    if (response.status === 429) {
+      return res.status(429).json({
+        success: false,
+        message:
+          "Verification service is temporarily busy. Please wait a moment and try again.",
+        code: "RATE_LIMITED",
+      });
+    }
+
     const data = await response.json();
 
     if (!data.status) {
@@ -631,6 +667,32 @@ const verifyBankAccount = async (req, res, next) => {
  *     responses:
  *       200:
  *         description: Bank list retrieved successfully
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                 count:
+ *                   type: number
+ *                 data:
+ *                   type: array
+ *                   items:
+ *                     type: object
+ *                     properties:
+ *                       name:
+ *                         type: string
+ *                         example: "Access Bank"
+ *                       code:
+ *                         type: string
+ *                         example: "044"
+ *                       slug:
+ *                         type: string
+ *                       type:
+ *                         type: string
+ *                       active:
+ *                         type: boolean
  */
 const getBankList = async (req, res, next) => {
   try {
@@ -684,8 +746,76 @@ const getBankList = async (req, res, next) => {
   }
 };
 
+/**
+ * @swagger
+ * /api/driver/check-status:
+ *   post:
+ *     summary: Check driver application status by email (Public - No auth required)
+ *     tags: [Driver]
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - email
+ *             properties:
+ *               email:
+ *                 type: string
+ *                 description: Email used in the driver application
+ *     responses:
+ *       200:
+ *         description: Application status retrieved
+ *       404:
+ *         description: No application found
+ */
+const checkApplicationByEmail = async (req, res, next) => {
+  try {
+    const { email } = req.body;
+
+    if (!email || !email.trim()) {
+      return res.status(400).json({
+        success: false,
+        message: "Email address is required",
+      });
+    }
+
+    const emailRegex = /^\S+@\S+\.\S+$/;
+    if (!emailRegex.test(email.trim())) {
+      return res.status(400).json({
+        success: false,
+        message: "Please enter a valid email address",
+      });
+    }
+
+    const application = await DriverApplication.findOne({
+      email: email.trim().toLowerCase(),
+    }).select(
+      "name email vehicle_model plate_number vehicle_color available_seats status submitted_at reviewed_at rejection_reason createdAt",
+    );
+
+    if (!application) {
+      return res.status(404).json({
+        success: false,
+        message: "No driver application found for this email address",
+        code: "NOT_FOUND",
+      });
+    }
+
+    res.status(200).json({
+      success: true,
+      message: "Application found",
+      data: application,
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
 module.exports = {
   applyAsDriver,
+  checkApplicationByEmail,
   getApplicationStatus,
   getDriverProfile,
   updateDriverProfile,

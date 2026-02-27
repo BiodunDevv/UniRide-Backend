@@ -12,6 +12,8 @@ const {
   sendPinResetCode,
 } = require("../services/emailService");
 const { sendPushNotification } = require("../services/pushNotificationService");
+const Language = require("../models/Language");
+const { translateText } = require("../utils/translator");
 
 /**
  * Helper: create in-app notification and optionally push
@@ -74,7 +76,7 @@ const generateToken = (id, device_id) => {
  *                 type: string
  *               role:
  *                 type: string
- *                 enum: [user, driver]
+ *                 enum: [user]
  *                 default: user
  *     responses:
  *       201:
@@ -82,18 +84,10 @@ const generateToken = (id, device_id) => {
  */
 const register = async (req, res, next) => {
   try {
-    const { name, email, password, role } = req.body;
+    const { name, email, password } = req.body;
 
-    // Validate role — only user and driver can self-register
-    const allowedRoles = ["user", "driver"];
-    const assignedRole = role && allowedRoles.includes(role) ? role : "user";
-
-    if (role && !allowedRoles.includes(role)) {
-      return res.status(400).json({
-        success: false,
-        message: "Invalid role. Only 'user' and 'driver' roles can register.",
-      });
-    }
+    // Only users can self-register; drivers must apply via the web portal
+    const assignedRole = "user";
 
     // Check if user exists
     const existingUser = await User.findOne({ email });
@@ -377,6 +371,7 @@ const login = async (req, res, next) => {
           biometric_enabled: user.biometric_enabled,
           pin_enabled: user.pin_enabled,
           first_login: user.first_login,
+          preferred_language: user.preferred_language || "en",
         },
         token,
       },
@@ -1912,6 +1907,87 @@ const resetPin = async (req, res, next) => {
   }
 };
 
+// ─── Update language preference ──────────────────────────────────────────────
+const updateLanguagePreference = async (req, res, next) => {
+  try {
+    const { language } = req.body;
+
+    if (!language) {
+      return res.status(400).json({
+        success: false,
+        message: "Language code is required",
+      });
+    }
+
+    // Verify the language exists in our supported languages
+    const lang = await Language.findOne({
+      code: language.toLowerCase(),
+      is_active: true,
+    });
+    if (!lang) {
+      return res.status(400).json({
+        success: false,
+        message: "This language is not currently supported",
+      });
+    }
+
+    await User.findByIdAndUpdate(req.user._id, {
+      preferred_language: language.toLowerCase(),
+    });
+
+    res.status(200).json({
+      success: true,
+      message: "Language preference updated",
+      data: { preferred_language: language.toLowerCase() },
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// ─── Translate text endpoint ─────────────────────────────────────────────────
+const translateUserText = async (req, res, next) => {
+  try {
+    const { texts, target_language, source_language } = req.body;
+
+    if (!texts || !target_language) {
+      return res.status(400).json({
+        success: false,
+        message: "texts and target_language are required",
+      });
+    }
+
+    const translated = await translateText(
+      texts,
+      target_language,
+      source_language || "en",
+    );
+
+    res.status(200).json({
+      success: true,
+      data: { translations: translated },
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// ─── Get available languages (public) ────────────────────────────────────────
+const getAvailableLanguages = async (req, res, next) => {
+  try {
+    const languages = await Language.find({ is_active: true })
+      .select("code name native_name is_default")
+      .sort({ is_default: -1, name: 1 });
+
+    res.status(200).json({
+      success: true,
+      data: languages,
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
 module.exports = {
   register,
   verifyEmail,
@@ -1940,4 +2016,7 @@ module.exports = {
   pinLogin,
   forgotPin,
   resetPin,
+  updateLanguagePreference,
+  translateUserText,
+  getAvailableLanguages,
 };
