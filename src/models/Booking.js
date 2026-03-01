@@ -48,6 +48,16 @@ const bookingSchema = new mongoose.Schema(
       ref: "User",
       required: true,
     },
+    seats_requested: {
+      type: Number,
+      default: 1,
+      min: 1,
+    },
+    total_fare: {
+      type: Number,
+      min: 0,
+      default: 0,
+    },
     payment_method: {
       type: String,
       enum: ["cash", "transfer"],
@@ -75,8 +85,15 @@ const bookingSchema = new mongoose.Schema(
     },
     status: {
       type: String,
-      enum: ["active", "accepted", "in_progress", "completed", "cancelled"],
-      default: "active",
+      enum: [
+        "pending",
+        "accepted",
+        "declined",
+        "in_progress",
+        "completed",
+        "cancelled",
+      ],
+      default: "pending",
     },
     rating: {
       type: Number,
@@ -87,10 +104,21 @@ const bookingSchema = new mongoose.Schema(
       type: String,
       maxlength: 500,
     },
+    reviewed_by: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "User",
+    },
+    reviewed_at: {
+      type: Date,
+    },
+    admin_note: {
+      type: String,
+      maxlength: 500,
+    },
   },
   {
     timestamps: true,
-  }
+  },
 );
 
 // Compound index for user's bookings

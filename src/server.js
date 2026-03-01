@@ -50,15 +50,26 @@ io.on("connection", (socket) => {
     if (user_id && role) {
       socket.join(`${role}-${user_id}`);
       console.log(
-        `✅ User ${user_id} (${role}) joined room: ${role}-${user_id}`
+        `✅ User ${user_id} (${role}) joined room: ${role}-${user_id}`,
       );
     }
+  });
+
+  // Handle joining the live-map room (for users and admins who want live driver locations)
+  socket.on("join-live-map", () => {
+    socket.join("live-map");
+    console.log(`🗺️ Socket ${socket.id} joined live-map room`);
+  });
+
+  socket.on("leave-live-map", () => {
+    socket.leave("live-map");
   });
 
   // Handle drivers joining available-drivers room
   socket.on("driver-available", (data) => {
     const { driver_id } = data;
     socket.join("available-drivers");
+    socket.join(`driver-tracking-${driver_id}`);
     console.log(`🚗 Driver ${driver_id} joined available-drivers room`);
   });
 
@@ -66,10 +77,65 @@ io.on("connection", (socket) => {
   socket.on("driver-unavailable", (data) => {
     const { driver_id } = data;
     socket.leave("available-drivers");
+    socket.leave(`driver-tracking-${driver_id}`);
     console.log(`🚗 Driver ${driver_id} left available-drivers room`);
   });
 
-  // Handle real-time location updates
+  // Handle real-time driver location streaming (from driver's device)
+  socket.on("driver-location-stream", (data) => {
+    const { driver_id, latitude, longitude, heading } = data;
+    // Broadcast to live-map viewers (users + admin)
+    io.to("live-map").emit("driver-location-updated", {
+      driver_id,
+      location: { latitude, longitude },
+      heading: heading || 0,
+      timestamp: new Date(),
+    });
+    // Also broadcast to ride-specific room if active
+    if (data.ride_id) {
+      io.to(`ride-${data.ride_id}`).emit("driver-location-update", {
+        latitude,
+        longitude,
+        heading,
+        timestamp: new Date(),
+      });
+    }
+  });
+
+  // Handle joining a specific ride room
+  socket.on("join-ride", (data) => {
+    const { ride_id } = data;
+    if (ride_id) {
+      socket.join(`ride-${ride_id}`);
+      console.log(`🚗 Socket ${socket.id} joined ride-${ride_id}`);
+    }
+  });
+
+  socket.on("leave-ride", (data) => {
+    const { ride_id } = data;
+    if (ride_id) socket.leave(`ride-${ride_id}`);
+  });
+
+  // Handle joining the drivers feed (all online drivers see new ride requests)
+  socket.on("join-driver-feed", () => {
+    socket.join("driver-feed");
+    console.log(`📡 Socket ${socket.id} joined driver-feed`);
+  });
+
+  socket.on("leave-driver-feed", () => {
+    socket.leave("driver-feed");
+  });
+
+  // Handle joining user's personal booking feed
+  socket.on("join-user-feed", (data) => {
+    const { user_id } = data;
+    if (user_id) {
+      socket.join(`user-feed-${user_id}`);
+      console.log(`📡 User ${user_id} joined user-feed`);
+    }
+  });
+
+  // Handle real-time location updates (legacy - for active rides)
   socket.on("update-location", (data) => {
     const { ride_id, latitude, longitude } = data;
     // Broadcast to users in this ride

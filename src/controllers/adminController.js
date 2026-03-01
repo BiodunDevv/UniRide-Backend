@@ -10,6 +10,7 @@ const BroadcastMessage = require("../models/BroadcastMessage");
 const NotificationSettings = require("../models/NotificationSettings");
 const UserNotification = require("../models/UserNotification");
 const Language = require("../models/Language");
+const CampusLocation = require("../models/CampusLocation");
 const {
   sendDriverApprovalEmail,
   sendDriverRejectionEmail,
@@ -1637,366 +1638,420 @@ const getDashboard = async (req, res, next) => {
   try {
     const { period = "30days" } = req.query;
 
-    // Calculate date range based on period
+    // Calculate date range - use new Date() fresh each time to avoid mutation
     const now = new Date();
     let startDate;
 
     switch (period) {
       case "7days":
-        startDate = new Date(now.setDate(now.getDate() - 7));
+        startDate = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
         break;
       case "30days":
-        startDate = new Date(now.setDate(now.getDate() - 30));
+        startDate = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
         break;
       case "90days":
-        startDate = new Date(now.setDate(now.getDate() - 90));
+        startDate = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000);
         break;
       case "year":
-        startDate = new Date(now.setFullYear(now.getFullYear() - 1));
+        startDate = new Date(
+          now.getFullYear() - 1,
+          now.getMonth(),
+          now.getDate(),
+        );
         break;
       case "all":
-        startDate = new Date(0); // Beginning of time
+        startDate = new Date(0);
         break;
       default:
-        startDate = new Date(now.setDate(now.getDate() - 30));
+        startDate = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
     }
 
-    // Execute all queries in parallel for maximum speed
-    const [
-      // User statistics
-      totalUsers,
-      activeUsers,
-      flaggedUsers,
-      newUsersCount,
-      userGrowthData,
+    const periodMs = Date.now() - startDate.getTime();
+    const previousPeriodStart = new Date(startDate.getTime() - periodMs);
 
-      // Driver statistics
-      totalDrivers,
-      activeDrivers,
-      inactiveDrivers,
-      flaggedDrivers,
-      newDriversCount,
+    // Execute ALL queries in parallel — split into logical groups
+    const [stats, charts, previousPeriod] = await Promise.all([
+      // ── Group 1: Counts & Aggregations ────────────────────────────
+      Promise.all([
+        // Users (0-3)
+        User.countDocuments({ role: "user" }),
+        User.countDocuments({ role: "user", is_flagged: false }),
+        User.countDocuments({ role: "user", is_flagged: true }),
+        User.countDocuments({ role: "user", createdAt: { $gte: startDate } }),
 
-      // Driver application statistics
-      pendingApplications,
-      approvedApplicationsCount,
-      rejectedApplicationsCount,
-      applicationStatusData,
-
-      // Ride statistics
-      totalRides,
-      completedRides,
-      cancelledRides,
-      inProgressRides,
-      rideStatusData,
-      ridesByFareSource,
-
-      // Booking statistics
-      totalBookings,
-      completedBookings,
-      cancelledBookings,
-      activeBookings,
-      bookingStatusData,
-      paymentMethodData,
-
-      // Revenue statistics
-      totalRevenue,
-      revenueByMonth,
-
-      // Support ticket statistics
-      totalTickets,
-      openTickets,
-      closedTickets,
-      ticketsByPriority,
-      ticketsByCategory,
-
-      // Admin statistics
-      totalAdmins,
-      superAdmins,
-
-      // Notification statistics
-      unreadNotifications,
-      notificationsByType,
-
-      // Rating statistics
-      averageRating,
-      ratingDistribution,
-    ] = await Promise.all([
-      // User queries
-      User.countDocuments({ role: "user" }),
-      User.countDocuments({ role: "user", is_flagged: false }),
-      User.countDocuments({ role: "user", is_flagged: true }),
-      User.countDocuments({
-        role: "user",
-        createdAt: { $gte: startDate },
-      }),
-      User.aggregate([
-        {
-          $match: {
-            role: "user",
-            createdAt: { $gte: startDate },
-          },
-        },
-        {
-          $group: {
-            _id: {
-              year: { $year: "$createdAt" },
-              month: { $month: "$createdAt" },
-              day: { $dayOfMonth: "$createdAt" },
+        // Drivers (4-8)
+        Driver.countDocuments(),
+        Driver.countDocuments({ status: "active" }),
+        Driver.countDocuments({ status: "inactive" }),
+        Driver.aggregate([
+          {
+            $lookup: {
+              from: "users",
+              localField: "user_id",
+              foreignField: "_id",
+              as: "user",
             },
-            count: { $sum: 1 },
           },
-        },
-        { $sort: { "_id.year": 1, "_id.month": 1, "_id.day": 1 } },
-        {
-          $project: {
-            _id: 0,
-            date: {
-              $dateFromParts: {
-                year: "$_id.year",
-                month: "$_id.month",
-                day: "$_id.day",
+          { $unwind: "$user" },
+          { $match: { "user.is_flagged": true } },
+          { $count: "total" },
+        ]).then((r) => r[0]?.total || 0),
+        Driver.countDocuments({ createdAt: { $gte: startDate } }),
+
+        // Applications (9-11)
+        DriverApplication.countDocuments({ status: "pending" }),
+        DriverApplication.countDocuments({
+          status: "approved",
+          reviewed_at: { $gte: startDate },
+        }),
+        DriverApplication.countDocuments({
+          status: "rejected",
+          reviewed_at: { $gte: startDate },
+        }),
+
+        // Rides (12-15)
+        Ride.countDocuments(),
+        Ride.countDocuments({ status: "completed" }),
+        Ride.countDocuments({ status: "cancelled" }),
+        Ride.countDocuments({
+          status: { $in: ["accepted", "in_progress"] },
+        }),
+
+        // Bookings (16-19)
+        Booking.countDocuments(),
+        Booking.countDocuments({ status: "completed" }),
+        Booking.countDocuments({ status: "cancelled" }),
+        Booking.countDocuments({
+          status: { $in: ["accepted", "in_progress", "pending"] },
+        }),
+
+        // Revenue (20)
+        Ride.aggregate([
+          {
+            $match: {
+              status: "completed",
+              createdAt: { $gte: startDate },
+            },
+          },
+          {
+            $group: { _id: null, total: { $sum: "$fare" } },
+          },
+        ]).then((r) => r[0]?.total || 0),
+
+        // Support (21-23)
+        SupportTicket.countDocuments(),
+        SupportTicket.countDocuments({ status: "open" }),
+        SupportTicket.countDocuments({ status: "closed" }),
+
+        // Admin (24-25)
+        User.countDocuments({ role: { $in: ["admin", "super_admin"] } }),
+        User.countDocuments({ role: "super_admin" }),
+
+        // Notifications (26)
+        AdminNotification.countDocuments({ is_read: false }),
+
+        // Rating (27)
+        Booking.aggregate([
+          { $match: { rating: { $exists: true, $ne: null } } },
+          {
+            $group: { _id: null, avg: { $avg: "$rating" }, count: { $sum: 1 } },
+          },
+        ]).then((r) => ({
+          average: r[0]?.avg || 0,
+          total_rated: r[0]?.count || 0,
+        })),
+
+        // Locations (28-30)
+        CampusLocation.countDocuments({}),
+        CampusLocation.countDocuments({ is_active: true }),
+        CampusLocation.countDocuments({ is_popular: true }),
+
+        // Check-in rate (31)
+        Booking.aggregate([
+          { $match: { status: { $in: ["in_progress", "completed"] } } },
+          {
+            $group: {
+              _id: null,
+              total: { $sum: 1 },
+              checked_in: {
+                $sum: {
+                  $cond: [{ $eq: ["$check_in_status", "checked_in"] }, 1, 0],
+                },
               },
             },
-            count: 1,
           },
-        },
-      ]),
+        ]).then((r) => ({
+          total: r[0]?.total || 0,
+          checked_in: r[0]?.checked_in || 0,
+        })),
 
-      // Driver queries
-      Driver.countDocuments(),
-      Driver.countDocuments({ status: "active" }),
-      Driver.countDocuments({ status: "inactive" }),
-      Driver.aggregate([
-        {
-          $lookup: {
-            from: "users",
-            localField: "user_id",
-            foreignField: "_id",
-            as: "user",
-          },
-        },
-        { $unwind: "$user" },
-        {
-          $match: {
-            "user.is_flagged": true,
-          },
-        },
-        { $count: "total" },
-      ]).then((result) => result[0]?.total || 0),
-      Driver.countDocuments({ createdAt: { $gte: startDate } }),
-
-      // Driver application queries
-      DriverApplication.countDocuments({ status: "pending" }),
-      DriverApplication.countDocuments({
-        status: "approved",
-        reviewed_at: { $gte: startDate },
-      }),
-      DriverApplication.countDocuments({
-        status: "rejected",
-        reviewed_at: { $gte: startDate },
-      }),
-      DriverApplication.aggregate([
-        {
-          $group: {
-            _id: "$status",
-            count: { $sum: 1 },
-          },
-        },
-      ]),
-
-      // Ride queries
-      Ride.countDocuments(),
-      Ride.countDocuments({ status: "completed" }),
-      Ride.countDocuments({ status: "cancelled" }),
-      Ride.countDocuments({ status: { $in: ["accepted", "in_progress"] } }),
-      Ride.aggregate([
-        {
-          $match: { createdAt: { $gte: startDate } },
-        },
-        {
-          $group: {
-            _id: "$status",
-            count: { $sum: 1 },
-          },
-        },
-      ]),
-      Ride.aggregate([
-        {
-          $group: {
-            _id: "$fare_policy_source",
-            count: { $sum: 1 },
-          },
-        },
-      ]),
-
-      // Booking queries
-      Booking.countDocuments(),
-      Booking.countDocuments({ status: "completed" }),
-      Booking.countDocuments({ status: "cancelled" }),
-      Booking.countDocuments({
-        status: { $in: ["active", "accepted", "in_progress"] },
-      }),
-      Booking.aggregate([
-        {
-          $match: { createdAt: { $gte: startDate } },
-        },
-        {
-          $group: {
-            _id: "$status",
-            count: { $sum: 1 },
-          },
-        },
-      ]),
-      Booking.aggregate([
-        {
-          $match: { payment_status: "paid" },
-        },
-        {
-          $group: {
-            _id: "$payment_method",
-            count: { $sum: 1 },
-          },
-        },
-      ]),
-
-      // Revenue queries
-      Ride.aggregate([
-        {
-          $match: {
-            status: "completed",
-            createdAt: { $gte: startDate },
-          },
-        },
-        {
-          $group: {
-            _id: null,
-            total: { $sum: "$fare" },
-          },
-        },
-      ]).then((result) => result[0]?.total || 0),
-      Ride.aggregate([
-        {
-          $match: {
-            status: "completed",
-            createdAt: { $gte: startDate },
-          },
-        },
-        {
-          $group: {
-            _id: {
-              year: { $year: "$createdAt" },
-              month: { $month: "$createdAt" },
+        // Per-seat revenue (32)
+        Booking.aggregate([
+          {
+            $match: {
+              status: "completed",
+              createdAt: { $gte: startDate },
             },
-            revenue: { $sum: "$fare" },
-            rides: { $sum: 1 },
           },
-        },
-        { $sort: { "_id.year": 1, "_id.month": 1 } },
-        {
-          $project: {
-            _id: 0,
-            month: {
-              $concat: [
-                { $toString: "$_id.year" },
-                "-",
-                {
-                  $cond: {
-                    if: { $lt: ["$_id.month", 10] },
-                    then: { $concat: ["0", { $toString: "$_id.month" }] },
-                    else: { $toString: "$_id.month" },
-                  },
+          {
+            $lookup: {
+              from: "rides",
+              localField: "ride_id",
+              foreignField: "_id",
+              as: "ride",
+            },
+          },
+          { $unwind: "$ride" },
+          {
+            $group: {
+              _id: null,
+              totalSeats: { $sum: "$seats_requested" },
+              totalFareRevenue: {
+                $sum: {
+                  $multiply: ["$ride.fare", "$seats_requested"],
                 },
-              ],
+              },
             },
-            revenue: 1,
-            rides: 1,
           },
-        },
+        ]).then((r) => ({
+          total_seats_booked: r[0]?.totalSeats || 0,
+          total_seat_revenue: r[0]?.totalFareRevenue || 0,
+        })),
       ]),
 
-      // Support ticket queries
-      SupportTicket.countDocuments(),
-      SupportTicket.countDocuments({ status: "open" }),
-      SupportTicket.countDocuments({ status: "closed" }),
-      SupportTicket.aggregate([
-        {
-          $group: {
-            _id: "$priority",
-            count: { $sum: 1 },
+      // ── Group 2: Chart/Timeseries Data ────────────────────────────
+      Promise.all([
+        // User growth chart (0)
+        User.aggregate([
+          { $match: { role: "user", createdAt: { $gte: startDate } } },
+          {
+            $group: {
+              _id: {
+                year: { $year: "$createdAt" },
+                month: { $month: "$createdAt" },
+                day: { $dayOfMonth: "$createdAt" },
+              },
+              count: { $sum: 1 },
+            },
           },
-        },
+          { $sort: { "_id.year": 1, "_id.month": 1, "_id.day": 1 } },
+          {
+            $project: {
+              _id: 0,
+              date: {
+                $dateFromParts: {
+                  year: "$_id.year",
+                  month: "$_id.month",
+                  day: "$_id.day",
+                },
+              },
+              count: 1,
+            },
+          },
+        ]),
+
+        // Revenue by month (1)
+        Ride.aggregate([
+          {
+            $match: {
+              status: "completed",
+              createdAt: { $gte: startDate },
+            },
+          },
+          {
+            $group: {
+              _id: {
+                year: { $year: "$createdAt" },
+                month: { $month: "$createdAt" },
+              },
+              revenue: { $sum: "$fare" },
+              rides: { $sum: 1 },
+            },
+          },
+          { $sort: { "_id.year": 1, "_id.month": 1 } },
+          {
+            $project: {
+              _id: 0,
+              month: {
+                $concat: [
+                  { $toString: "$_id.year" },
+                  "-",
+                  {
+                    $cond: {
+                      if: { $lt: ["$_id.month", 10] },
+                      then: {
+                        $concat: ["0", { $toString: "$_id.month" }],
+                      },
+                      else: { $toString: "$_id.month" },
+                    },
+                  },
+                ],
+              },
+              revenue: 1,
+              rides: 1,
+            },
+          },
+        ]),
+
+        // Ride status breakdown in period (2)
+        Ride.aggregate([
+          { $match: { createdAt: { $gte: startDate } } },
+          { $group: { _id: "$status", count: { $sum: 1 } } },
+        ]),
+
+        // Booking status breakdown in period (3)
+        Booking.aggregate([
+          { $match: { createdAt: { $gte: startDate } } },
+          { $group: { _id: "$status", count: { $sum: 1 } } },
+        ]),
+
+        // Application status (4)
+        DriverApplication.aggregate([
+          { $group: { _id: "$status", count: { $sum: 1 } } },
+        ]),
+
+        // Payment methods (5)
+        Booking.aggregate([
+          { $match: { payment_status: "paid" } },
+          { $group: { _id: "$payment_method", count: { $sum: 1 } } },
+        ]),
+
+        // Fare source (6)
+        Ride.aggregate([
+          { $group: { _id: "$fare_policy_source", count: { $sum: 1 } } },
+        ]),
+
+        // Rating distribution (7)
+        Booking.aggregate([
+          { $match: { rating: { $exists: true, $ne: null } } },
+          { $group: { _id: "$rating", count: { $sum: 1 } } },
+          { $sort: { _id: 1 } },
+        ]),
+
+        // Support by priority (8)
+        SupportTicket.aggregate([
+          { $group: { _id: "$priority", count: { $sum: 1 } } },
+        ]),
+
+        // Support by category (9)
+        SupportTicket.aggregate([
+          { $group: { _id: "$category", count: { $sum: 1 } } },
+        ]),
+
+        // Notifications by type (10)
+        AdminNotification.aggregate([
+          { $group: { _id: "$type", count: { $sum: 1 } } },
+        ]),
+
+        // Peak hours — when rides are created (11)
+        Ride.aggregate([
+          { $match: { createdAt: { $gte: startDate } } },
+          {
+            $group: {
+              _id: { $hour: "$departure_time" },
+              count: { $sum: 1 },
+            },
+          },
+          { $sort: { _id: 1 } },
+          {
+            $project: {
+              _id: 0,
+              hour: "$_id",
+              rides: "$count",
+            },
+          },
+        ]),
+
+        // Top routes (12)
+        Ride.aggregate([
+          {
+            $match: {
+              createdAt: { $gte: startDate },
+              pickup_location_id: { $exists: true },
+              destination_id: { $exists: true },
+            },
+          },
+          {
+            $group: {
+              _id: {
+                pickup: "$pickup_location_id",
+                destination: "$destination_id",
+              },
+              count: { $sum: 1 },
+              avg_fare: { $avg: "$fare" },
+            },
+          },
+          { $sort: { count: -1 } },
+          { $limit: 10 },
+          {
+            $lookup: {
+              from: "campuslocations",
+              localField: "_id.pickup",
+              foreignField: "_id",
+              as: "pickup",
+            },
+          },
+          {
+            $lookup: {
+              from: "campuslocations",
+              localField: "_id.destination",
+              foreignField: "_id",
+              as: "destination",
+            },
+          },
+          {
+            $project: {
+              _id: 0,
+              pickup: {
+                $ifNull: [
+                  { $arrayElemAt: ["$pickup.short_name", 0] },
+                  { $arrayElemAt: ["$pickup.name", 0] },
+                ],
+              },
+              destination: {
+                $ifNull: [
+                  { $arrayElemAt: ["$destination.short_name", 0] },
+                  { $arrayElemAt: ["$destination.name", 0] },
+                ],
+              },
+              rides: "$count",
+              avg_fare: { $round: ["$avg_fare", 0] },
+            },
+          },
+        ]),
+
+        // Rides per day chart (13)
+        Ride.aggregate([
+          { $match: { createdAt: { $gte: startDate } } },
+          {
+            $group: {
+              _id: {
+                year: { $year: "$createdAt" },
+                month: { $month: "$createdAt" },
+                day: { $dayOfMonth: "$createdAt" },
+              },
+              count: { $sum: 1 },
+            },
+          },
+          { $sort: { "_id.year": 1, "_id.month": 1, "_id.day": 1 } },
+          {
+            $project: {
+              _id: 0,
+              date: {
+                $dateFromParts: {
+                  year: "$_id.year",
+                  month: "$_id.month",
+                  day: "$_id.day",
+                },
+              },
+              rides: "$count",
+            },
+          },
+        ]),
       ]),
-      SupportTicket.aggregate([
-        {
-          $group: {
-            _id: "$category",
-            count: { $sum: 1 },
-          },
-        },
-      ]),
 
-      // Admin queries
-      User.countDocuments({ role: { $in: ["admin", "super_admin"] } }),
-      User.countDocuments({ role: "super_admin" }),
-
-      // Notification queries
-      AdminNotification.countDocuments({ is_read: false }),
-      AdminNotification.aggregate([
-        {
-          $group: {
-            _id: "$type",
-            count: { $sum: 1 },
-          },
-        },
-      ]),
-
-      // Rating queries
-      Booking.aggregate([
-        {
-          $match: {
-            rating: { $exists: true, $ne: null },
-          },
-        },
-        {
-          $group: {
-            _id: null,
-            average: { $avg: "$rating" },
-          },
-        },
-      ]).then((result) => result[0]?.average || 0),
-      Booking.aggregate([
-        {
-          $match: {
-            rating: { $exists: true, $ne: null },
-          },
-        },
-        {
-          $group: {
-            _id: "$rating",
-            count: { $sum: 1 },
-          },
-        },
-        { $sort: { _id: 1 } },
-      ]),
-    ]);
-
-    // Calculate growth percentages
-    const calculateGrowthPercentage = (current, previous) => {
-      if (previous === 0) return current > 0 ? 100 : 0;
-      return ((current - previous) / previous) * 100;
-    };
-
-    // Get previous period data for comparison
-    let previousPeriodStart;
-    const periodDays = Math.floor(
-      (new Date() - startDate) / (1000 * 60 * 60 * 24),
-    );
-    previousPeriodStart = new Date(startDate);
-    previousPeriodStart.setDate(previousPeriodStart.getDate() - periodDays);
-
-    const [previousUsers, previousDrivers, previousRides, previousRevenue] =
-      await Promise.all([
+      // ── Group 3: Previous Period Comparisons ──────────────────────
+      Promise.all([
         User.countDocuments({
           role: "user",
           createdAt: { $gte: previousPeriodStart, $lt: startDate },
@@ -2015,110 +2070,208 @@ const getDashboard = async (req, res, next) => {
               createdAt: { $gte: previousPeriodStart, $lt: startDate },
             },
           },
-          {
-            $group: {
-              _id: null,
-              total: { $sum: "$fare" },
-            },
-          },
-        ]).then((result) => result[0]?.total || 0),
-      ]);
+          { $group: { _id: null, total: { $sum: "$fare" } } },
+        ]).then((r) => r[0]?.total || 0),
+        Booking.countDocuments({
+          createdAt: { $gte: previousPeriodStart, $lt: startDate },
+        }),
+      ]),
+    ]);
 
-    // Build comprehensive dashboard response
+    // Destructure stats
+    const [
+      totalUsers,
+      activeUsers,
+      flaggedUsers,
+      newUsersCount,
+      totalDrivers,
+      activeDrivers,
+      inactiveDrivers,
+      flaggedDrivers,
+      newDriversCount,
+      pendingApplications,
+      approvedApplicationsCount,
+      rejectedApplicationsCount,
+      totalRides,
+      completedRides,
+      cancelledRides,
+      inProgressRides,
+      totalBookings,
+      completedBookings,
+      cancelledBookings,
+      activeBookings,
+      totalRevenue,
+      totalTickets,
+      openTickets,
+      closedTickets,
+      totalAdmins,
+      superAdmins,
+      unreadNotifications,
+      ratingData,
+      totalLocations,
+      activeLocations,
+      popularLocations,
+      checkInData,
+      seatRevenue,
+    ] = stats;
+
+    const [
+      userGrowthData,
+      revenueByMonth,
+      rideStatusData,
+      bookingStatusData,
+      applicationStatusData,
+      paymentMethodData,
+      ridesByFareSource,
+      ratingDistribution,
+      ticketsByPriority,
+      ticketsByCategory,
+      notificationsByType,
+      peakHoursData,
+      topRoutesData,
+      ridesPerDayData,
+    ] = charts;
+
+    const [
+      previousUsers,
+      previousDrivers,
+      previousRides,
+      previousRevenue,
+      previousBookings,
+    ] = previousPeriod;
+
+    // Growth calculation helper
+    const growth = (current, previous) => {
+      if (previous === 0) return current > 0 ? 100 : 0;
+      return parseFloat((((current - previous) / previous) * 100).toFixed(2));
+    };
+
+    const periodDays = Math.max(
+      1,
+      Math.floor(periodMs / (1000 * 60 * 60 * 24)),
+    );
+
+    // Build response
     const dashboardData = {
       overview: {
         total_users: totalUsers,
         active_users: activeUsers,
         flagged_users: flaggedUsers,
         new_users_this_period: newUsersCount,
-        user_growth_percentage: calculateGrowthPercentage(
-          newUsersCount,
-          previousUsers,
-        ).toFixed(2),
+        user_growth_percentage: growth(newUsersCount, previousUsers),
 
         total_drivers: totalDrivers,
         active_drivers: activeDrivers,
         inactive_drivers: inactiveDrivers,
         flagged_drivers: flaggedDrivers,
         new_drivers_this_period: newDriversCount,
-        driver_growth_percentage: calculateGrowthPercentage(
-          newDriversCount,
-          previousDrivers,
-        ).toFixed(2),
+        driver_growth_percentage: growth(newDriversCount, previousDrivers),
 
         total_rides: totalRides,
         completed_rides: completedRides,
         cancelled_rides: cancelledRides,
         in_progress_rides: inProgressRides,
         ride_completion_rate:
-          totalRides > 0 ? ((completedRides / totalRides) * 100).toFixed(2) : 0,
+          totalRides > 0
+            ? parseFloat(((completedRides / totalRides) * 100).toFixed(2))
+            : 0,
 
         total_bookings: totalBookings,
         completed_bookings: completedBookings,
         cancelled_bookings: cancelledBookings,
         active_bookings: activeBookings,
+        booking_growth_percentage: growth(totalBookings, previousBookings),
 
-        total_revenue: totalRevenue.toFixed(2),
-        revenue_growth_percentage: calculateGrowthPercentage(
-          totalRevenue,
-          previousRevenue,
-        ).toFixed(2),
+        total_revenue: parseFloat(totalRevenue.toFixed(2)),
+        revenue_growth_percentage: growth(totalRevenue, previousRevenue),
+        avg_revenue_per_day:
+          periodDays > 0
+            ? parseFloat((totalRevenue / periodDays).toFixed(2))
+            : 0,
+
+        // Per-seat revenue
+        total_seats_booked: seatRevenue.total_seats_booked,
+        total_seat_revenue: parseFloat(
+          seatRevenue.total_seat_revenue.toFixed(2),
+        ),
+        avg_fare_per_seat:
+          seatRevenue.total_seats_booked > 0
+            ? parseFloat(
+                (
+                  seatRevenue.total_seat_revenue /
+                  seatRevenue.total_seats_booked
+                ).toFixed(2),
+              )
+            : 0,
 
         pending_applications: pendingApplications,
         total_admins: totalAdmins,
         super_admins: superAdmins,
         unread_notifications: unreadNotifications,
-        average_rating: averageRating.toFixed(2),
+        average_rating: parseFloat(ratingData.average.toFixed(2)),
+        total_rated_rides: ratingData.total_rated,
+
+        total_locations: totalLocations,
+        active_locations: activeLocations,
+        popular_locations: popularLocations,
+
+        check_in_rate:
+          checkInData.total > 0
+            ? parseFloat(
+                ((checkInData.checked_in / checkInData.total) * 100).toFixed(2),
+              )
+            : 0,
       },
 
-      // Chart data for user growth
+      // Chart data
       user_growth_chart: userGrowthData.map((item) => ({
         date: item.date.toISOString().split("T")[0],
         users: item.count,
       })),
 
-      // Chart data for ride status distribution
+      rides_per_day_chart: ridesPerDayData.map((item) => ({
+        date: item.date.toISOString().split("T")[0],
+        rides: item.rides,
+      })),
+
       ride_status_chart: rideStatusData.map((item) => ({
         status: item._id || "unknown",
         count: item.count,
       })),
 
-      // Chart data for booking status distribution
       booking_status_chart: bookingStatusData.map((item) => ({
         status: item._id || "unknown",
         count: item.count,
       })),
 
-      // Chart data for revenue by month
       revenue_chart: revenueByMonth.map((item) => ({
         month: item.month,
         revenue: parseFloat(item.revenue.toFixed(2)),
         rides: item.rides,
       })),
 
-      // Chart data for application status
       application_status_chart: applicationStatusData.map((item) => ({
         status: item._id,
         count: item.count,
       })),
 
-      // Chart data for payment methods
       payment_method_chart: paymentMethodData.map((item) => ({
         method: item._id || "unknown",
         count: item.count,
       })),
 
-      // Chart data for fare policy source distribution
       fare_source_chart: ridesByFareSource.map((item) => ({
         source: item._id || "unknown",
         count: item.count,
       })),
 
-      // Chart data for rating distribution
       rating_distribution_chart: ratingDistribution.map((item) => ({
         rating: item._id,
         count: item.count,
       })),
+
+      peak_hours_chart: peakHoursData,
+      top_routes: topRoutesData,
 
       // Support ticket analytics
       support_tickets: {
@@ -2135,7 +2288,7 @@ const getDashboard = async (req, res, next) => {
         })),
       },
 
-      // Notification breakdown
+      // Notifications
       notifications: {
         unread: unreadNotifications,
         by_type: notificationsByType.map((item) => ({
@@ -2144,24 +2297,26 @@ const getDashboard = async (req, res, next) => {
         })),
       },
 
-      // Driver applications summary
+      // Driver applications
       driver_applications: {
         pending: pendingApplications,
         approved_this_period: approvedApplicationsCount,
         rejected_this_period: rejectedApplicationsCount,
         approval_rate:
           approvedApplicationsCount + rejectedApplicationsCount > 0
-            ? (
-                (approvedApplicationsCount /
-                  (approvedApplicationsCount + rejectedApplicationsCount)) *
-                100
-              ).toFixed(2)
+            ? parseFloat(
+                (
+                  (approvedApplicationsCount /
+                    (approvedApplicationsCount + rejectedApplicationsCount)) *
+                  100
+                ).toFixed(2),
+              )
             : 0,
       },
 
-      // Period information
+      // Period info
       period_info: {
-        period: period,
+        period,
         start_date: startDate.toISOString(),
         end_date: new Date().toISOString(),
         days: periodDays,
@@ -2590,7 +2745,7 @@ const resetDriverLicense = async (req, res, next) => {
  *                 type: array
  *                 items:
  *                   type: string
- *                   enum: [support_tickets, notifications, broadcasts, bookings, ride_history]
+ *                   enum: [support_tickets, notifications, broadcasts, bookings, ride_history, locations]
  *               before_date:
  *                 type: string
  *                 format: date
@@ -2607,7 +2762,7 @@ const clearAuditData = async (req, res, next) => {
       return res.status(400).json({
         success: false,
         message:
-          "Please specify which data to clear: support_tickets, notifications, broadcasts, bookings, ride_history",
+          "Please specify which data to clear: support_tickets, notifications, broadcasts, bookings, ride_history, locations",
       });
     }
 
@@ -2617,6 +2772,7 @@ const clearAuditData = async (req, res, next) => {
       "broadcasts",
       "bookings",
       "ride_history",
+      "locations",
     ];
     const invalidTargets = targets.filter((t) => !validTargets.includes(t));
     if (invalidTargets.length > 0) {
@@ -2675,6 +2831,11 @@ const clearAuditData = async (req, res, next) => {
           results.rides = deleted.deletedCount;
           break;
         }
+        case "locations": {
+          const deleted = await CampusLocation.deleteMany(dateFilter);
+          results.locations = deleted.deletedCount;
+          break;
+        }
       }
     }
 
@@ -2729,6 +2890,7 @@ const getAuditSummary = async (req, res, next) => {
       broadcasts,
       completedBookings,
       completedRides,
+      totalLocations,
     ] = await Promise.all([
       SupportTicket.countDocuments({ status: { $in: ["closed", "resolved"] } }),
       AdminNotification.countDocuments({}),
@@ -2736,6 +2898,7 @@ const getAuditSummary = async (req, res, next) => {
       BroadcastMessage.countDocuments({}),
       Booking.countDocuments({ status: { $in: ["completed", "cancelled"] } }),
       Ride.countDocuments({ status: { $in: ["completed", "cancelled"] } }),
+      CampusLocation.countDocuments({}),
     ]);
 
     res.status(200).json({
@@ -2747,6 +2910,7 @@ const getAuditSummary = async (req, res, next) => {
         broadcasts,
         bookings: completedBookings,
         rides: completedRides,
+        locations: totalLocations,
       },
     });
   } catch (error) {

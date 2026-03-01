@@ -11,6 +11,12 @@ const {
   updateVehicleImage,
   verifyBankAccount,
   getBankList,
+  goOnline,
+  goOffline,
+  updateDriverLiveLocation,
+  getOnlineDrivers,
+  getDriverLocations,
+  updateUserLocation,
 } = require("../controllers/driverController");
 const { protect } = require("../middlewares/authMiddleware");
 const authorize = require("../middlewares/roleMiddleware");
@@ -46,5 +52,25 @@ router.patch(
   authorize("driver"),
   toggleDriverStatus,
 );
+
+// ── Location & Online Status ────────────────────────────────────────────────
+router.patch("/go-online", protect, authorize("driver"), goOnline);
+router.patch("/go-offline", protect, authorize("driver"), goOffline);
+router.post(
+  "/location",
+  protect,
+  authorize("driver"),
+  updateDriverLiveLocation,
+);
+router.get("/online", protect, getOnlineDrivers);
+router.get(
+  "/locations",
+  protect,
+  authorize("admin", "super_admin"),
+  getDriverLocations,
+);
+
+// ── User Location ───────────────────────────────────────────────────────────
+router.post("/user-location", protect, updateUserLocation);
 
 module.exports = router;

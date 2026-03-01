@@ -118,6 +118,40 @@ const driverSchema = new mongoose.Schema(
       enum: ["inactive", "active"],
       default: "inactive",
     },
+    is_online: {
+      type: Boolean,
+      default: false,
+    },
+    current_location: {
+      type: {
+        type: String,
+        enum: ["Point"],
+      },
+      coordinates: {
+        type: [Number], // [longitude, latitude]
+        default: undefined,
+      },
+    },
+    last_known_location: {
+      type: {
+        type: String,
+        enum: ["Point"],
+      },
+      coordinates: {
+        type: [Number],
+        default: undefined,
+      },
+      address: {
+        type: String,
+      },
+    },
+    heading: {
+      type: Number, // Direction in degrees (0-360) for car icon rotation
+      default: 0,
+    },
+    last_online_at: {
+      type: Date,
+    },
     rating: {
       type: Number,
       default: 5.0,
@@ -159,6 +193,11 @@ driverSchema.methods.updateRating = function (newRating) {
 
   return this.save();
 };
+
+// Geospatial indexes for location queries
+driverSchema.index({ current_location: "2dsphere" });
+driverSchema.index({ last_known_location: "2dsphere" });
+driverSchema.index({ is_online: 1, status: 1 });
 
 const Driver = mongoose.model("Driver", driverSchema);
 

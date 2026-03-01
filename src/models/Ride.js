@@ -47,10 +47,22 @@ const mongoose = require("mongoose");
 
 const rideSchema = new mongoose.Schema(
   {
+    created_by: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "User",
+    },
     driver_id: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "Driver",
-      required: true,
+      default: null,
+    },
+    pickup_location_id: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "CampusLocation",
+    },
+    destination_id: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "CampusLocation",
     },
     pickup_location: {
       type: {
@@ -106,8 +118,15 @@ const rideSchema = new mongoose.Schema(
     },
     status: {
       type: String,
-      enum: ["available", "accepted", "in_progress", "completed", "cancelled"],
-      default: "available",
+      enum: [
+        "scheduled",
+        "available",
+        "accepted",
+        "in_progress",
+        "completed",
+        "cancelled",
+      ],
+      default: "scheduled",
     },
     gps_tracking_enabled: {
       type: Boolean,
@@ -130,10 +149,10 @@ const rideSchema = new mongoose.Schema(
       type: {
         type: String,
         enum: ["Point"],
-        default: "Point",
       },
       coordinates: {
         type: [Number], // [longitude, latitude] - updated in real-time
+        default: undefined,
       },
     },
     ended_at: {
@@ -142,7 +161,7 @@ const rideSchema = new mongoose.Schema(
   },
   {
     timestamps: true,
-  }
+  },
 );
 
 // Index for geospatial queries

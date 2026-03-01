@@ -813,6 +813,317 @@ const checkApplicationByEmail = async (req, res, next) => {
   }
 };
 
+const { getIO } = require("../utils/socketManager");
+
+// ─── Go Online ──────────────────────────────────────────────────────────────
+const goOnline = async (req, res, next) => {
+  try {
+    const { latitude, longitude, heading } = req.body;
+
+    if (!latitude || !longitude) {
+      return res.status(400).json({
+        success: false,
+        message: "Location (latitude, longitude) is required to go online",
+      });
+    }
+
+    const driver = await Driver.findOne({ user_id: req.user._id });
+    if (!driver) {
+      return res
+        .status(404)
+        .json({ success: false, message: "Driver profile not found" });
+    }
+
+    if (driver.application_status !== "approved") {
+      return res
+        .status(403)
+        .json({
+          success: false,
+          message: "Driver application not yet approved",
+        });
+    }
+
+    driver.is_online = true;
+    driver.status = "active";
+    driver.current_location = {
+      type: "Point",
+      coordinates: [longitude, latitude],
+    };
+    if (heading !== undefined) driver.heading = heading;
+    driver.last_online_at = new Date();
+    await driver.save();
+
+    // Broadcast to all connected clients that a new driver is online
+    try {
+      const io = getIO();
+      const user = await User.findById(req.user._id).select(
+        "name profile_picture",
+      );
+      io.emit("driver-online", {
+        driver_id: driver._id,
+        user_id: req.user._id,
+        name: user?.name,
+        profile_picture: user?.profile_picture,
+        vehicle_model: driver.vehicle_model,
+        vehicle_color: driver.vehicle_color,
+        plate_number: driver.plate_number,
+        rating: driver.rating,
+        available_seats: driver.available_seats,
+        location: { latitude, longitude },
+        heading: driver.heading,
+      });
+    } catch (err) {
+      console.log("Socket emit failed (non-critical):", err.message);
+    }
+
+    res.status(200).json({
+      success: true,
+      message: "You are now online and available for rides",
+      data: {
+        is_online: driver.is_online,
+        current_location: driver.current_location,
+      },
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// ─── Go Offline ─────────────────────────────────────────────────────────────
+const goOffline = async (req, res, next) => {
+  try {
+    const driver = await Driver.findOne({ user_id: req.user._id });
+    if (!driver) {
+      return res
+        .status(404)
+        .json({ success: false, message: "Driver profile not found" });
+    }
+
+    // Save last known location before going offline
+    if (
+      driver.current_location &&
+      driver.current_location.coordinates &&
+      driver.current_location.coordinates.length === 2
+    ) {
+      driver.last_known_location = {
+        type: "Point",
+        coordinates: driver.current_location.coordinates,
+        address: req.body.address || "",
+      };
+    }
+
+    driver.is_online = false;
+    driver.status = "inactive";
+    driver.last_online_at = new Date();
+    await driver.save();
+
+    // Broadcast driver went offline
+    try {
+      const io = getIO();
+      io.emit("driver-offline", {
+        driver_id: driver._id,
+        user_id: req.user._id,
+        last_known_location: driver.last_known_location,
+      });
+    } catch (err) {
+      console.log("Socket emit failed (non-critical):", err.message);
+    }
+
+    res.status(200).json({
+      success: true,
+      message: "You are now offline",
+      data: {
+        is_online: driver.is_online,
+        last_known_location: driver.last_known_location,
+      },
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// ─── Update Driver Live Location ────────────────────────────────────────────
+const updateDriverLiveLocation = async (req, res, next) => {
+  try {
+    const { latitude, longitude, heading } = req.body;
+
+    if (!latitude || !longitude) {
+      return res.status(400).json({
+        success: false,
+        message: "Location (latitude, longitude) is required",
+      });
+    }
+
+    const driver = await Driver.findOne({ user_id: req.user._id });
+    if (!driver || !driver.is_online) {
+      return res.status(400).json({
+        success: false,
+        message: "Driver must be online to update location",
+      });
+    }
+
+    driver.current_location = {
+      type: "Point",
+      coordinates: [longitude, latitude],
+    };
+    if (heading !== undefined) driver.heading = heading;
+    driver.last_online_at = new Date();
+    await driver.save();
+
+    // Broadcast real-time location to all connected clients
+    try {
+      const io = getIO();
+      io.emit("driver-location-updated", {
+        driver_id: driver._id,
+        user_id: req.user._id,
+        location: { latitude, longitude },
+        heading: driver.heading,
+        timestamp: new Date(),
+      });
+    } catch (err) {
+      // Non-critical
+    }
+
+    res.status(200).json({ success: true });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// ─── Get Online Drivers (for user map and admin) ────────────────────────────
+const getOnlineDrivers = async (req, res, next) => {
+  try {
+    const { latitude, longitude, radius } = req.query;
+
+    let query = { is_online: true, application_status: "approved" };
+
+    // Optional: filter by proximity
+    if (latitude && longitude && radius) {
+      query["current_location"] = {
+        $near: {
+          $geometry: {
+            type: "Point",
+            coordinates: [parseFloat(longitude), parseFloat(latitude)],
+          },
+          $maxDistance: parseInt(radius) || 10000, // default 10km
+        },
+      };
+    }
+
+    const drivers = await Driver.find(query)
+      .populate("user_id", "name profile_picture email")
+      .select(
+        "user_id vehicle_model vehicle_color plate_number available_seats rating total_ratings current_location heading last_online_at is_online",
+      )
+      .lean();
+
+    const formattedDrivers = drivers.map((d) => ({
+      driver_id: d._id,
+      user_id: d.user_id?._id,
+      name: d.user_id?.name,
+      profile_picture: d.user_id?.profile_picture,
+      email: d.user_id?.email,
+      vehicle_model: d.vehicle_model,
+      vehicle_color: d.vehicle_color,
+      plate_number: d.plate_number,
+      available_seats: d.available_seats,
+      rating: d.rating,
+      total_ratings: d.total_ratings,
+      heading: d.heading,
+      is_online: d.is_online,
+      location: d.current_location?.coordinates
+        ? {
+            longitude: d.current_location.coordinates[0],
+            latitude: d.current_location.coordinates[1],
+          }
+        : null,
+      last_online_at: d.last_online_at,
+    }));
+
+    res.status(200).json({
+      success: true,
+      count: formattedDrivers.length,
+      data: formattedDrivers,
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// ─── Get All Driver Locations (for admin map - includes offline with last known) ─
+const getDriverLocations = async (req, res, next) => {
+  try {
+    const drivers = await Driver.find({
+      application_status: "approved",
+      $or: [
+        { is_online: true },
+        { "last_known_location.coordinates": { $exists: true, $ne: [] } },
+      ],
+    })
+      .populate("user_id", "name profile_picture email")
+      .select(
+        "user_id vehicle_model vehicle_color plate_number available_seats rating current_location last_known_location heading last_online_at is_online status",
+      )
+      .lean();
+
+    const formattedDrivers = drivers.map((d) => {
+      const loc = d.is_online ? d.current_location : d.last_known_location;
+      return {
+        driver_id: d._id,
+        user_id: d.user_id?._id,
+        name: d.user_id?.name,
+        profile_picture: d.user_id?.profile_picture,
+        email: d.user_id?.email,
+        vehicle_model: d.vehicle_model,
+        vehicle_color: d.vehicle_color,
+        plate_number: d.plate_number,
+        available_seats: d.available_seats,
+        rating: d.rating,
+        heading: d.heading,
+        is_online: d.is_online,
+        status: d.status,
+        location: loc?.coordinates
+          ? { longitude: loc.coordinates[0], latitude: loc.coordinates[1] }
+          : null,
+        last_online_at: d.last_online_at,
+      };
+    });
+
+    res.status(200).json({
+      success: true,
+      count: formattedDrivers.length,
+      data: formattedDrivers,
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// ─── Update User Location ────────────────────────────────────────────────────
+const updateUserLocation = async (req, res, next) => {
+  try {
+    const { latitude, longitude } = req.body;
+
+    if (!latitude || !longitude) {
+      return res.status(400).json({
+        success: false,
+        message: "Location (latitude, longitude) is required",
+      });
+    }
+
+    await User.findByIdAndUpdate(req.user._id, {
+      current_location: {
+        type: "Point",
+        coordinates: [longitude, latitude],
+      },
+    });
+
+    res.status(200).json({ success: true, message: "Location updated" });
+  } catch (error) {
+    next(error);
+  }
+};
+
 module.exports = {
   applyAsDriver,
   checkApplicationByEmail,
@@ -824,4 +1135,10 @@ module.exports = {
   updateVehicleImage,
   verifyBankAccount,
   getBankList,
+  goOnline,
+  goOffline,
+  updateDriverLiveLocation,
+  getOnlineDrivers,
+  getDriverLocations,
+  updateUserLocation,
 };

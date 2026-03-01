@@ -157,6 +157,16 @@ const userSchema = new mongoose.Schema(
       default: "en",
       trim: true,
     },
+    current_location: {
+      type: {
+        type: String,
+        enum: ["Point"],
+        default: "Point",
+      },
+      coordinates: {
+        type: [Number], // [longitude, latitude]
+      },
+    },
   },
   {
     timestamps: true,

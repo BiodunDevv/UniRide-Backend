@@ -14,6 +14,8 @@ const rideRoutes = require("./routes/rideRoutes");
 const bookingRoutes = require("./routes/bookingRoutes");
 const supportRoutes = require("./routes/supportRoutes");
 const settingsRoutes = require("./routes/settingsRoutes");
+const locationRoutes = require("./routes/locationRoutes");
+const platformSettingsRoutes = require("./routes/platformSettingsRoutes");
 
 const app = express();
 
@@ -127,6 +129,8 @@ app.use("/api/rides", rideRoutes);
 app.use("/api/booking", bookingRoutes);
 app.use("/api/support", supportRoutes);
 app.use("/api/settings", settingsRoutes);
+app.use("/api/locations", locationRoutes);
+app.use("/api/platform-settings", platformSettingsRoutes);
 
 // Welcome route
 app.get("/", (req, res) => {
