@@ -6,6 +6,7 @@ const { connectRedis } = require("./config/redis");
 const { setSocketIO } = require("./services/notificationService");
 const { setIO } = require("./utils/socketManager");
 const { initializeSupportSocket } = require("./socket/supportSocket");
+const { startRideScheduler } = require("./services/rideScheduler");
 const User = require("./models/User");
 
 const PORT = process.env.PORT || 5000;
@@ -146,6 +147,21 @@ io.on("connection", (socket) => {
     });
   });
 
+  // Handle real-time passenger location streaming
+  socket.on("passenger-location-stream", (data) => {
+    const { user_id, ride_id, latitude, longitude, name, profile_picture } =
+      data;
+    if (ride_id) {
+      io.to(`ride-${ride_id}`).emit("passenger-location-updated", {
+        user_id,
+        location: { latitude, longitude },
+        name: name || "Passenger",
+        profile_picture: profile_picture || null,
+        timestamp: new Date(),
+      });
+    }
+  });
+
   // Handle disconnection
   socket.on("disconnect", () => {
     console.log(`🔌 Socket disconnected: ${socket.id}`);
@@ -163,6 +179,9 @@ const startServer = async () => {
 
     // Create default super admin if not exists
     await createDefaultSuperAdmin();
+
+    // Start ride expiry scheduler
+    startRideScheduler();
 
     // Start server
     server.listen(PORT, () => {

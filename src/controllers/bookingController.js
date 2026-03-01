@@ -302,10 +302,11 @@ const declineBooking = async (req, res, next) => {
 // ── Admin: Get all bookings (with filters) ──────────────────────────────────
 const getAllBookings = async (req, res, next) => {
   try {
-    const { status, ride_id, page = 1, limit = 20 } = req.query;
+    const { status, ride_id, user_id, page = 1, limit = 20 } = req.query;
     const filter = {};
     if (status) filter.status = status;
     if (ride_id) filter.ride_id = ride_id;
+    if (user_id) filter.user_id = user_id;
 
     const bookings = await Booking.find(filter)
       .populate("user_id", "name email profile_picture")

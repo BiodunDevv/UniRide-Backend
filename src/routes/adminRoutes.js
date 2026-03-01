@@ -14,6 +14,7 @@ const {
   getDriverById,
   deleteDriver,
   getAllUsers,
+  getUserById,
   deleteUser,
   getFarePolicy,
   updateFarePolicy,
@@ -137,6 +138,12 @@ router.patch(
 
 // User management
 router.get("/users", protect, authorize("admin", "super_admin"), getAllUsers);
+router.get(
+  "/users/:id",
+  protect,
+  authorize("admin", "super_admin"),
+  getUserById,
+);
 router.delete(
   "/users/delete/:id",
   protect,

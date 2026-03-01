@@ -287,6 +287,7 @@ const getActiveRides = async (req, res, next) => {
     const { pickup, destination } = req.query;
     const filter = {
       status: { $in: ["scheduled", "available", "accepted"] },
+      departure_time: { $gt: new Date() }, // Only show rides that haven't departed yet
     };
 
     if (pickup) filter.pickup_location_id = pickup;
@@ -297,15 +298,25 @@ const getActiveRides = async (req, res, next) => {
       .populate("destination_id")
       .populate({
         path: "driver_id",
+        select:
+          "user_id vehicle_model vehicle_color plate_number available_seats rating is_online",
         populate: { path: "user_id", select: "name profile_picture" },
       })
       .sort({ departure_time: 1 });
 
-    const data = rides.map((r) => {
-      const obj = r.toObject();
-      obj.seats_remaining = r.available_seats - r.booked_seats;
-      return obj;
-    });
+    const data = rides
+      .filter((r) => {
+        // Hide scheduled rides whose driver is offline (not accepting rides)
+        if (r.status === "scheduled" && r.driver_id && !r.driver_id.is_online) {
+          return false;
+        }
+        return true;
+      })
+      .map((r) => {
+        const obj = r.toObject();
+        obj.seats_remaining = r.available_seats - r.booked_seats;
+        return obj;
+      });
 
     res.status(200).json({ success: true, count: data.length, data });
   } catch (error) {
@@ -347,9 +358,10 @@ const getRideDetails = async (req, res, next) => {
 // ── Admin: Get all rides ────────────────────────────────────────────────────
 const getAllRides = async (req, res, next) => {
   try {
-    const { status, page = 1, limit = 20 } = req.query;
+    const { status, driver_id, page = 1, limit = 20 } = req.query;
     const filter = {};
     if (status) filter.status = status;
+    if (driver_id) filter.driver_id = driver_id;
 
     const rides = await Ride.find(filter)
       .populate("pickup_location_id")

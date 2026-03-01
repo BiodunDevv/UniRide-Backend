@@ -776,6 +776,47 @@ const getAllUsers = async (req, res, next) => {
 
 /**
  * @swagger
+ * /api/admin/users/{id}:
+ *   get:
+ *     summary: Get a single user by ID
+ *     tags: [Admin]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: string
+ *     responses:
+ *       200:
+ *         description: User retrieved successfully
+ *       404:
+ *         description: User not found
+ */
+const getUserById = async (req, res, next) => {
+  try {
+    const { id } = req.params;
+    const user = await User.findById(id).select("-password");
+
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: "User not found",
+      });
+    }
+
+    res.status(200).json({
+      success: true,
+      data: user,
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * @swagger
  * /api/admin/update/{id}:
  *   patch:
  *     summary: Update admin role (Super Admin only)
@@ -3044,6 +3085,7 @@ module.exports = {
   getDriverById,
   deleteDriver,
   getAllUsers,
+  getUserById,
   deleteUser,
   getFarePolicy,
   updateFarePolicy,
