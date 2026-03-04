@@ -2,6 +2,7 @@ const Driver = require("../models/Driver");
 const DriverApplication = require("../models/DriverApplication");
 const User = require("../models/User");
 const AdminNotification = require("../models/AdminNotification");
+const UserNotification = require("../models/UserNotification");
 const {
   sendDriverApplicationReceivedEmail,
 } = require("../services/emailService");
@@ -357,6 +358,19 @@ const updateDriverProfile = async (req, res, next) => {
 
     await driver.save();
 
+    // Notify driver about profile update
+    try {
+      await UserNotification.create({
+        user_id: req.user._id,
+        title: "Driver Profile Updated",
+        message: "Your driver profile has been updated successfully.",
+        type: "account",
+        metadata: { action: "driver_profile_updated" },
+      });
+    } catch (e) {
+      console.error("Notification failed:", e.message);
+    }
+
     res.status(200).json({
       success: true,
       message: "Profile updated successfully",
@@ -471,6 +485,19 @@ const updateDriverLicense = async (req, res, next) => {
     driver.license_last_updated = new Date();
     await driver.save();
 
+    // Notify driver about license update
+    try {
+      await UserNotification.create({
+        user_id: req.user._id,
+        title: "License Updated",
+        message: "Your driver's license has been updated successfully.",
+        type: "account",
+        metadata: { action: "license_updated" },
+      });
+    } catch (e) {
+      console.error("Notification failed:", e.message);
+    }
+
     res.status(200).json({
       success: true,
       message: "Driver's license updated successfully",
@@ -526,6 +553,19 @@ const updateVehicleImage = async (req, res, next) => {
 
     driver.vehicle_image = vehicle_image;
     await driver.save();
+
+    // Notify driver about vehicle image update
+    try {
+      await UserNotification.create({
+        user_id: req.user._id,
+        title: "Vehicle Image Updated",
+        message: "Your vehicle image has been updated successfully.",
+        type: "account",
+        metadata: { action: "vehicle_image_updated" },
+      });
+    } catch (e) {
+      console.error("Notification failed:", e.message);
+    }
 
     res.status(200).json({
       success: true,
@@ -835,12 +875,10 @@ const goOnline = async (req, res, next) => {
     }
 
     if (driver.application_status !== "approved") {
-      return res
-        .status(403)
-        .json({
-          success: false,
-          message: "Driver application not yet approved",
-        });
+      return res.status(403).json({
+        success: false,
+        message: "Driver application not yet approved",
+      });
     }
 
     driver.is_online = true;

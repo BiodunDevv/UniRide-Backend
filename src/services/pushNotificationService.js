@@ -1,8 +1,13 @@
 const { Expo } = require("expo-server-sdk");
 const NotificationSettings = require("../models/NotificationSettings");
 
-// Create Expo SDK client
-const expo = new Expo();
+// Create Expo SDK client.
+// EXPO_ACCESS_TOKEN is optional but recommended for production — it raises
+// rate limits and enables push receipt checking.
+const expo = new Expo({
+  accessToken: process.env.EXPO_ACCESS_TOKEN || undefined,
+  useFcmV1: true, // use FCM v1 for Android (legacy key support dropped by Google)
+});
 
 /**
  * Send push notification to a single user via Expo Push
@@ -51,6 +56,9 @@ const sendPushNotification = async ({
       sound: "default",
       title,
       body: message,
+      priority: "high", // ensure delivery on both iOS and Android
+      badge: 1, // iOS badge count
+      channelId: "default", // Android channel
       data: {
         type: notificationType,
         timestamp: new Date().toISOString(),
@@ -71,10 +79,14 @@ const sendPushNotification = async ({
       }
     }
 
-    // Process tickets — remove invalid tokens
+    // Process tickets — remove invalid tokens and log errors
     const invalidTokens = [];
     tickets.forEach((ticket, i) => {
       if (ticket.status === "error") {
+        console.error(
+          `[Push] Ticket error for token ${tokens[i]}: ${ticket.message}`,
+          ticket.details,
+        );
         if (
           ticket.details?.error === "DeviceNotRegistered" ||
           ticket.details?.error === "InvalidCredentials"

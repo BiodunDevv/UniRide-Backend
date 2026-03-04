@@ -16,6 +16,7 @@ const supportRoutes = require("./routes/supportRoutes");
 const settingsRoutes = require("./routes/settingsRoutes");
 const locationRoutes = require("./routes/locationRoutes");
 const platformSettingsRoutes = require("./routes/platformSettingsRoutes");
+const reviewRoutes = require("./routes/reviewRoutes");
 
 const app = express();
 
@@ -131,6 +132,7 @@ app.use("/api/support", supportRoutes);
 app.use("/api/settings", settingsRoutes);
 app.use("/api/locations", locationRoutes);
 app.use("/api/platform-settings", platformSettingsRoutes);
+app.use("/api/reviews", reviewRoutes);
 
 // Welcome route
 app.get("/", (req, res) => {

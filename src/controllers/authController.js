@@ -453,6 +453,16 @@ const biometricAuth = async (req, res, next) => {
     // Generate token with device_id
     const token = generateToken(user._id, device_id);
 
+    // Create login notification (match login())
+    createSystemNotification(
+      user._id,
+      "New Sign In",
+      `You signed in via biometric at ${new Date().toLocaleString()}.`,
+      "security",
+      { action: "biometric_login", device_id },
+      false,
+    );
+
     res.status(200).json({
       success: true,
       message: "Biometric authentication successful",
@@ -585,20 +595,32 @@ const changePassword = async (req, res, next) => {
     // Update password and first_login flag
     user.password = new_password;
     user.first_login = false;
+
+    // Security: keep only the current device session; sign out all others.
+    // req.device_id is populated by the auth middleware from the JWT payload.
+    const currentDeviceId = req.device_id;
+    if (currentDeviceId && user.devices?.length) {
+      const currentDevice = user.devices.find(
+        (d) => d.device_id === currentDeviceId,
+      );
+      user.devices = currentDevice ? [currentDevice] : [];
+    }
+
     await user.save();
 
     // Create security notification
     await createSystemNotification(
       user._id,
       "Password Changed",
-      "Your password was changed successfully. If you didn't make this change, please contact support immediately.",
+      `Your password was changed successfully. All other active sessions have been signed out for your security. If you didn't make this change, please contact support immediately.`,
       "security",
-      { action: "password_changed" },
+      { action: "password_changed", other_sessions_cleared: true },
     );
 
     res.status(200).json({
       success: true,
-      message: "Password changed successfully",
+      message:
+        "Password changed successfully. All other active sessions have been signed out.",
     });
   } catch (error) {
     next(error);
@@ -719,6 +741,16 @@ const updateProfile = async (req, res, next) => {
     if (profile_picture !== undefined) user.profile_picture = profile_picture;
 
     await user.save();
+
+    // Notify user about profile update
+    createSystemNotification(
+      user._id,
+      "Profile Updated",
+      "Your profile has been updated successfully.",
+      "account",
+      { action: "profile_updated" },
+      false,
+    );
 
     res.status(200).json({
       success: true,
@@ -1039,21 +1071,34 @@ const resetPassword = async (req, res, next) => {
     user.password = newPassword;
     user.password_reset_code = undefined;
     user.password_reset_expires = undefined;
+
+    // Security: clear ALL active device sessions so every logged-in device
+    // is immediately invalidated (the auth middleware rejects tokens whose
+    // device_id no longer exists in the array).
+    const clearedCount = user.devices ? user.devices.length : 0;
+    user.devices = [];
+
     await user.save();
 
     // Create security notification
     await createSystemNotification(
       user._id,
       "Password Reset",
-      "Your password was reset successfully via email verification.",
+      `Your password was reset successfully. ${
+        clearedCount > 0
+          ? `${clearedCount} active session${
+              clearedCount !== 1 ? "s have" : " has"
+            } been signed out for your security.`
+          : "You can now sign in with your new password."
+      }`,
       "security",
-      { action: "password_reset" },
+      { action: "password_reset", sessions_cleared: clearedCount },
     );
 
     res.status(200).json({
       success: true,
       message:
-        "Password reset successfully. You can now login with your new password.",
+        "Password reset successfully. All active sessions have been signed out. Please sign in again.",
     });
   } catch (error) {
     next(error);
@@ -1133,6 +1178,16 @@ const removeDevice = async (req, res, next) => {
     user.devices = user.devices.filter((d) => d.device_id !== device_id);
     await user.save();
 
+    // Security notification
+    createSystemNotification(
+      user._id,
+      "Device Removed",
+      "A device has been removed from your account.",
+      "security",
+      { action: "device_removed", device_id },
+      false,
+    );
+
     res.status(200).json({
       success: true,
       message: "Device removed successfully",
@@ -1192,6 +1247,18 @@ const logoutAllDevices = async (req, res, next) => {
 
     user.device_id = null; // Clear legacy field
     await user.save();
+
+    // Security notification
+    createSystemNotification(
+      user._id,
+      "All Devices Logged Out",
+      except_current
+        ? "You have been logged out from all other devices."
+        : "You have been logged out from all devices.",
+      "security",
+      { action: "logout_all_devices", except_current: !!except_current },
+      false,
+    );
 
     res.status(200).json({
       success: true,
@@ -1740,6 +1807,16 @@ const pinLogin = async (req, res, next) => {
     }
 
     const token = generateToken(user._id, device_id);
+
+    // Create login notification (match login())
+    createSystemNotification(
+      user._id,
+      "New Sign In",
+      `You signed in via PIN at ${new Date().toLocaleString()}.`,
+      "security",
+      { action: "pin_login", device_id },
+      false,
+    );
 
     res.status(200).json({
       success: true,

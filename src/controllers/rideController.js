@@ -429,10 +429,35 @@ const cancelRide = async (req, res, next) => {
     ride.status = "cancelled";
     await ride.save();
 
+    // Find all affected bookings before bulk cancelling
+    const affectedBookings = await Booking.find({
+      ride_id: ride._id,
+      status: { $in: ["pending", "accepted"] },
+    }).select("user_id");
+
     await Booking.updateMany(
       { ride_id: ride._id, status: { $in: ["pending", "accepted"] } },
       { status: "cancelled" },
     );
+
+    // Notify all affected users about ride cancellation
+    for (const b of affectedBookings) {
+      notificationService.notifyRideCancellation(b.user_id.toString(), "user", {
+        ride_id: ride._id.toString(),
+      });
+    }
+
+    // Notify driver if assigned
+    if (ride.driver_id) {
+      const driver = await Driver.findById(ride.driver_id).select("user_id");
+      if (driver) {
+        notificationService.notifyRideCancellation(
+          driver.user_id.toString(),
+          "driver",
+          { ride_id: ride._id.toString() },
+        );
+      }
+    }
 
     res.status(200).json({ success: true, message: "Ride cancelled" });
   } catch (error) {
@@ -521,6 +546,12 @@ const endRide = async (req, res, next) => {
         io.to(`user-feed-${b.user_id}`).emit("ride:ended", {
           ride_id: ride._id.toString(),
         });
+        // Send push + in-app notification
+        notificationService.notifyRideEnded(
+          b.user_id.toString(),
+          driver?.user_id?.toString(),
+          { _id: ride._id.toString() },
+        );
       }
     } catch (e) {
       console.log("Socket emit failed (non-critical):", e.message);

@@ -279,6 +279,14 @@ const declineBooking = async (req, res, next) => {
     if (req.body.admin_note) booking.admin_note = req.body.admin_note;
     await booking.save();
 
+    // Send in-app + push notification to user
+    notificationService.notifyBookingDeclined(booking.user_id._id.toString(), {
+      booking_id: booking._id.toString(),
+      ride_id: booking.ride_id?._id?.toString(),
+      pickup: booking.ride_id?.pickup_location_id?.name,
+      destination: booking.ride_id?.destination_id?.name,
+    });
+
     // Emit socket event
     try {
       const io = getIO();
@@ -368,6 +376,33 @@ const checkInRide = async (req, res, next) => {
     if (ride.status === "scheduled" || ride.status === "accepted") {
       ride.status = "in_progress";
       await ride.save();
+    }
+
+    // Notify driver about passenger check-in
+    if (ride.driver_id) {
+      const driverDoc = await Driver.findById(ride.driver_id).select("user_id");
+      if (driverDoc) {
+        const passenger = await User.findById(req.user._id).select("name");
+        notificationService.notifyDriverNewBooking &&
+          (async () => {
+            const UserNotification = require("../models/UserNotification");
+            try {
+              await UserNotification.create({
+                user_id: driverDoc.user_id,
+                title: "Passenger Checked In ✅",
+                message: `${passenger?.name || "A passenger"} has checked in for your ride.`,
+                type: "booking",
+                metadata: {
+                  action: "passenger_checked_in",
+                  booking_id: booking._id.toString(),
+                  ride_id: ride._id.toString(),
+                },
+              });
+            } catch (e) {
+              console.error("Check-in notification failed:", e.message);
+            }
+          })();
+      }
     }
 
     // Emit socket events - notify driver and ride room
@@ -467,6 +502,26 @@ const rateDriver = async (req, res, next) => {
     const driver = await Driver.findById(booking.ride_id.driver_id);
     if (driver && driver.updateRating) await driver.updateRating(rating);
 
+    // Notify driver about the new rating
+    if (driver) {
+      const UserNotification = require("../models/UserNotification");
+      try {
+        await UserNotification.create({
+          user_id: driver.user_id,
+          title: "New Rating Received ⭐",
+          message: `A passenger rated you ${rating}/5${feedback ? ': "' + feedback.substring(0, 50) + '"' : ""}.`,
+          type: "account",
+          metadata: {
+            action: "new_rating",
+            rating,
+            booking_id: booking._id.toString(),
+          },
+        });
+      } catch (e) {
+        console.error("Rating notification failed:", e.message);
+      }
+    }
+
     res
       .status(200)
       .json({ success: true, message: "Thank you for your rating!" });
@@ -540,6 +595,15 @@ const cancelBooking = async (req, res, next) => {
       if (ride && ride.driver_id) {
         const driver = await Driver.findById(ride.driver_id).select("user_id");
         if (driver) {
+          // Send push + in-app notification
+          notificationService.notifyDriverBookingCancelled(
+            driver.user_id.toString(),
+            {
+              booking_id: booking._id.toString(),
+              ride_id: ride._id.toString(),
+              seats_freed: booking.seats_requested,
+            },
+          );
           io.to(`user-feed-${driver.user_id}`).emit("booking:cancelled", {
             booking_id: booking._id.toString(),
             ride_id: ride._id.toString(),
