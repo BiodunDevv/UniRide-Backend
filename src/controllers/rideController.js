@@ -150,6 +150,44 @@ const createRide = async (req, res, next) => {
 
     await ride.populate(["pickup_location_id", "destination_id"]);
 
+    // If driver created a ride, notify users with matching pending ride requests
+    if (isDriver) {
+      try {
+        const matchingRequests = await Ride.find({
+          status: "available",
+          driver_id: null,
+          pickup_location_id: pickup._id,
+          destination_id: dest._id,
+          departure_time: { $gte: new Date() },
+        }).select("_id");
+
+        if (matchingRequests.length > 0) {
+          const requestIds = matchingRequests.map((r) => r._id);
+          const matchingBookings = await Booking.find({
+            ride_id: { $in: requestIds },
+            status: "pending",
+          }).select("user_id");
+
+          const notifiedUsers = new Set();
+          for (const b of matchingBookings) {
+            const uid = b.user_id.toString();
+            if (!notifiedUsers.has(uid)) {
+              notifiedUsers.add(uid);
+              notificationService.notifyMatchingRideAvailable(uid, {
+                ride_id: ride._id.toString(),
+                pickup: pickup.name || pickup.address,
+                destination: dest.name || dest.address,
+                departure_time: ride.departure_time,
+                fare: ride.fare,
+              });
+            }
+          }
+        }
+      } catch (e) {
+        console.error("Matching ride notification error:", e.message);
+      }
+    }
+
     // Emit socket events for real-time updates
     try {
       const io = getIO();
@@ -222,9 +260,37 @@ const acceptRide = async (req, res, next) => {
       booking.reviewed_at = new Date();
       await booking.save();
 
-      // Notify the user
+      // Notify the passenger
       try {
-        await notificationService.notifyBookingConfirmed(booking, ride);
+        const passengerId = (
+          booking.user_id?._id || booking.user_id
+        ).toString();
+
+        // Ride creator gets "Driver Found!" — other passengers get "Ride Confirmed"
+        const isCreator =
+          ride.created_by && passengerId === ride.created_by.toString();
+
+        if (isCreator) {
+          notificationService.notifyRideAccepted(passengerId, {
+            name: req.user.name || "Your driver",
+            ride_id: ride._id.toString(),
+            pickup: ride.pickup_location_id?.name || "pickup",
+            destination: ride.destination_id?.name || "destination",
+            departure_time: ride.departure_time,
+          });
+        } else {
+          const totalFare =
+            booking.total_fare || (ride.fare || 0) * booking.seats_requested;
+          notificationService.notifyBookingConfirmed(passengerId, {
+            ride_id: ride._id,
+            pickup: ride.pickup_location_id?.name || "pickup",
+            destination: ride.destination_id?.name || "destination",
+            departure_time: ride.departure_time,
+            fare: totalFare,
+            fare_per_seat: ride.fare,
+            seats: booking.seats_requested,
+          });
+        }
       } catch (err) {
         console.log("Notification failed (non-critical):", err.message);
       }
@@ -542,15 +608,30 @@ const endRide = async (req, res, next) => {
       const rideBookings = await Booking.find({ ride_id: ride._id }).select(
         "user_id",
       );
+      const notifiedPassengers = new Set();
       for (const b of rideBookings) {
-        io.to(`user-feed-${b.user_id}`).emit("ride:ended", {
+        const passengerId = b.user_id.toString();
+        io.to(`user-feed-${passengerId}`).emit("ride:ended", {
           ride_id: ride._id.toString(),
         });
-        // Send push + in-app notification
-        notificationService.notifyRideEnded(
-          b.user_id.toString(),
-          driver?.user_id?.toString(),
-          { _id: ride._id.toString() },
+        // Send push + in-app notification to each passenger ONCE
+        if (!notifiedPassengers.has(passengerId)) {
+          notifiedPassengers.add(passengerId);
+          notificationService.notifyRideEnded(
+            passengerId,
+            null, // driver notified separately below
+            { _id: ride._id.toString() },
+          );
+        }
+      }
+      // Notify the driver once (not per-booking)
+      if (driver?.user_id) {
+        notificationService.createAndPush(
+          driver.user_id.toString(),
+          "Trip Complete ✅",
+          "Nice work! You've successfully completed a trip. Your earnings will be updated shortly.",
+          "ride",
+          { action: "ride_completed", ride_id: ride._id.toString() },
         );
       }
     } catch (e) {

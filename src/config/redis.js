@@ -1,6 +1,7 @@
 const redis = require("redis");
 
 let redisClient;
+let redisErrorLogged = false;
 
 const connectRedis = async () => {
   try {
@@ -8,21 +9,38 @@ const connectRedis = async () => {
       socket: {
         host: process.env.REDIS_HOST,
         port: process.env.REDIS_PORT,
+        connectTimeout: 5000,
+        reconnectStrategy: (retries) => {
+          if (retries > 3) return false; // Stop retrying after 3 attempts
+          return Math.min(retries * 500, 3000);
+        },
       },
       password: process.env.REDIS_PASSWORD,
     });
 
     redisClient.on("error", (err) => {
-      console.error("❌ Redis Client Error:", err);
+      if (!redisErrorLogged) {
+        console.warn(
+          "⚠️ Redis unavailable:",
+          err.message,
+          "— app will continue without caching",
+        );
+        redisErrorLogged = true;
+      }
     });
 
     redisClient.on("connect", () => {
+      redisErrorLogged = false;
       console.log("✅ Redis Connected Successfully");
     });
 
     await redisClient.connect();
   } catch (error) {
-    console.error("❌ Redis Connection Error:", error.message);
+    console.warn(
+      "⚠️ Redis Connection Failed:",
+      error.message,
+      "— app will continue without caching",
+    );
     // Don't exit process, allow app to run without Redis
   }
 };

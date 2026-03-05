@@ -125,6 +125,60 @@ const requestRide = async (req, res, next) => {
       }
     }
 
+    // If auto-accepted and ride has a driver, notify driver about new passenger
+    if (settings.auto_accept_bookings && ride.driver_id) {
+      try {
+        const driverDoc = await Driver.findById(ride.driver_id);
+        if (driverDoc) {
+          const pickup =
+            ride.pickup_location_id?.name ||
+            ride.pickup_location?.address ||
+            "pickup";
+          const destination =
+            ride.destination_id?.name ||
+            ride.destination?.address ||
+            "destination";
+          notificationService.notifyDriverPassengerJoined(
+            driverDoc.user_id.toString(),
+            {
+              booking_id: booking._id.toString(),
+              ride_id: ride._id.toString(),
+              pickup,
+              destination,
+              seats: seats_requested,
+              passenger_name: req.user.name || "A passenger",
+            },
+          );
+        }
+      } catch (e) {
+        console.error("Driver notification error:", e.message);
+      }
+    }
+
+    // If NOT auto-accepted and the ride has a driver, notify the driver about the pending booking
+    if (!settings.auto_accept_bookings && ride.driver_id) {
+      try {
+        const driverDoc = await Driver.findById(ride.driver_id);
+        if (driverDoc) {
+          const pickup = ride.pickup_location_id?.name || "pickup";
+          const destination = ride.destination_id?.name || "destination";
+          notificationService.notifyDriverNewBooking(
+            driverDoc.user_id.toString(),
+            {
+              booking_id: booking._id.toString(),
+              ride_id: ride._id.toString(),
+              pickup,
+              destination,
+              seats: seats_requested,
+              passenger_name: req.user.name || "A passenger",
+            },
+          );
+        }
+      } catch (e) {
+        console.error("Driver booking notification error:", e.message);
+      }
+    }
+
     res.status(201).json({
       success: true,
       message: settings.auto_accept_bookings
@@ -383,25 +437,17 @@ const checkInRide = async (req, res, next) => {
       const driverDoc = await Driver.findById(ride.driver_id).select("user_id");
       if (driverDoc) {
         const passenger = await User.findById(req.user._id).select("name");
-        notificationService.notifyDriverNewBooking &&
-          (async () => {
-            const UserNotification = require("../models/UserNotification");
-            try {
-              await UserNotification.create({
-                user_id: driverDoc.user_id,
-                title: "Passenger Checked In ✅",
-                message: `${passenger?.name || "A passenger"} has checked in for your ride.`,
-                type: "booking",
-                metadata: {
-                  action: "passenger_checked_in",
-                  booking_id: booking._id.toString(),
-                  ride_id: ride._id.toString(),
-                },
-              });
-            } catch (e) {
-              console.error("Check-in notification failed:", e.message);
-            }
-          })();
+        notificationService.createAndPush(
+          driverDoc.user_id,
+          "Passenger Checked In ✅",
+          `${passenger?.name || "A passenger"} has checked in for your ride.`,
+          "booking",
+          {
+            action: "passenger_checked_in",
+            booking_id: booking._id.toString(),
+            ride_id: ride._id.toString(),
+          },
+        );
       }
     }
 
@@ -455,6 +501,35 @@ const updatePaymentStatus = async (req, res, next) => {
     booking.payment_status = payment_status;
     await booking.save();
 
+    // Notify the passenger about payment status change
+    try {
+      const statusLabel =
+        payment_status === "paid"
+          ? "Payment Received ✅"
+          : payment_status === "refunded"
+            ? "Refund Processed 💰"
+            : `Payment ${payment_status.charAt(0).toUpperCase() + payment_status.slice(1)}`;
+      const statusMsg =
+        payment_status === "paid"
+          ? "Your ride payment has been received and confirmed. Thank you!"
+          : payment_status === "refunded"
+            ? "Your ride payment has been refunded. The amount will reflect in your account shortly."
+            : `Your payment status has been updated to: ${payment_status}.`;
+      notificationService.createAndPush(
+        booking.user_id,
+        statusLabel,
+        statusMsg,
+        "booking",
+        {
+          action: "payment_status_updated",
+          payment_status,
+          booking_id: booking._id.toString(),
+        },
+      );
+    } catch (e) {
+      console.error("Payment notification failed:", e.message);
+    }
+
     res.status(200).json({
       success: true,
       message: "Payment status updated",
@@ -504,22 +579,17 @@ const rateDriver = async (req, res, next) => {
 
     // Notify driver about the new rating
     if (driver) {
-      const UserNotification = require("../models/UserNotification");
-      try {
-        await UserNotification.create({
-          user_id: driver.user_id,
-          title: "New Rating Received ⭐",
-          message: `A passenger rated you ${rating}/5${feedback ? ': "' + feedback.substring(0, 50) + '"' : ""}.`,
-          type: "account",
-          metadata: {
-            action: "new_rating",
-            rating,
-            booking_id: booking._id.toString(),
-          },
-        });
-      } catch (e) {
-        console.error("Rating notification failed:", e.message);
-      }
+      notificationService.createAndPush(
+        driver.user_id,
+        `New ${rating}★ Rating`,
+        `A passenger rated their trip ${rating}/5.${feedback ? ` "${feedback.substring(0, 80)}"` : ""} Keep up the great work!`,
+        "account",
+        {
+          action: "new_rating",
+          rating,
+          booking_id: booking._id.toString(),
+        },
+      );
     }
 
     res
@@ -579,6 +649,22 @@ const cancelBooking = async (req, res, next) => {
     booking.status = "cancelled";
     await booking.save();
 
+    // Confirm cancellation to the user
+    try {
+      notificationService.createAndPush(
+        req.user._id.toString(),
+        "Booking Cancelled",
+        "Your booking has been cancelled successfully. You can browse other rides anytime.",
+        "booking",
+        {
+          action: "booking_cancelled_by_user",
+          booking_id: booking._id.toString(),
+        },
+      );
+    } catch (e) {
+      console.error("Cancel confirmation notification error:", e.message);
+    }
+
     // Free up seats if was accepted
     if (wasAccepted) {
       const ride = await Ride.findById(booking.ride_id);
@@ -602,6 +688,7 @@ const cancelBooking = async (req, res, next) => {
               booking_id: booking._id.toString(),
               ride_id: ride._id.toString(),
               seats_freed: booking.seats_requested,
+              passenger_name: req.user.name || "A passenger",
             },
           );
           io.to(`user-feed-${driver.user_id}`).emit("booking:cancelled", {

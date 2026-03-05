@@ -1,6 +1,6 @@
 const Ride = require("../models/Ride");
 const Booking = require("../models/Booking");
-const UserNotification = require("../models/UserNotification");
+const { createAndPush } = require("./notificationService");
 const { getIO } = require("../utils/socketManager");
 
 /**
@@ -51,14 +51,12 @@ const closeExpiredRides = async () => {
         // Notify user
         try {
           const userId = booking.user_id?._id || booking.user_id;
-          await UserNotification.create({
-            user_id: userId,
-            title: timedOut ? "Ride Request Timed Out" : "Ride Expired",
-            message: timedOut
-              ? "No driver accepted your ride request before the scheduled departure time. Please try again."
-              : "This ride has been cancelled because the departure time has passed.",
-            type: "ride",
-            metadata: { ride_id: ride._id.toString() },
+          const title = timedOut ? "Ride Request Timed Out" : "Ride Expired";
+          const message = timedOut
+            ? "No driver accepted your ride request before the scheduled departure time. Please try again."
+            : "This ride has been cancelled because the departure time has passed.";
+          createAndPush(userId, title, message, "ride", {
+            ride_id: ride._id.toString(),
           });
         } catch (err) {
           console.log("Notification failed (non-critical):", err.message);

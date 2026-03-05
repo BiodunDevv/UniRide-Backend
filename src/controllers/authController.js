@@ -12,11 +12,13 @@ const {
   sendPinResetCode,
 } = require("../services/emailService");
 const { sendPushNotification } = require("../services/pushNotificationService");
+const { createAndPush } = require("../services/notificationService");
 const Language = require("../models/Language");
 const { translateText } = require("../utils/translator");
 
 /**
- * Helper: create in-app notification and optionally push
+ * Helper: create in-app notification and optionally push.
+ * Delegates to the unified notificationService.createAndPush.
  */
 const createSystemNotification = async (
   user_id,
@@ -26,19 +28,22 @@ const createSystemNotification = async (
   metadata = {},
   sendPush = true,
 ) => {
-  try {
-    await UserNotification.create({ user_id, title, message, type, metadata });
-    if (sendPush) {
-      sendPushNotification({
+  if (sendPush) {
+    // Full flow: save to DB + send push
+    await createAndPush(user_id, title, message, type, metadata);
+  } else {
+    // In-app only (e.g. login confirmation — no push needed)
+    try {
+      await UserNotification.create({
         user_id,
         title,
         message,
-        data: metadata,
-        notificationType: type,
-      }).catch(() => {});
+        type,
+        metadata,
+      });
+    } catch (err) {
+      console.error("Failed to create system notification:", err.message);
     }
-  } catch (err) {
-    console.error("Failed to create system notification:", err.message);
   }
 };
 
@@ -349,14 +354,14 @@ const login = async (req, res, next) => {
     // Generate token with device_id
     const token = generateToken(user._id, device_id);
 
-    // Create login notification
-    createSystemNotification(
+    // Create login notification (saved to DB + push sent to any existing tokens)
+    await createSystemNotification(
       user._id,
       "New Sign In",
       `You signed in from ${req.body.device_name || "a device"} at ${new Date().toLocaleString()}.`,
       "security",
       { action: "login", device_name: req.body.device_name || "Unknown" },
-      false,
+      true,
     );
 
     res.status(200).json({
@@ -835,13 +840,14 @@ const verifyEmail = async (req, res, next) => {
     user.email_verification_expires = undefined;
     await user.save();
 
-    // Create system notification
+    // Create system notification (in-app only — user has no push token yet)
     await createSystemNotification(
       user._id,
       "Email Verified",
       "Your email address has been successfully verified. Welcome to UniRide!",
       "account",
       { action: "email_verified" },
+      false,
     );
 
     // Generate token (no device_id for email verification)
@@ -1080,7 +1086,7 @@ const resetPassword = async (req, res, next) => {
 
     await user.save();
 
-    // Create security notification
+    // Create security notification (in-app only — all devices/tokens were just cleared)
     await createSystemNotification(
       user._id,
       "Password Reset",
@@ -1093,6 +1099,7 @@ const resetPassword = async (req, res, next) => {
       }`,
       "security",
       { action: "password_reset", sessions_cleared: clearedCount },
+      false,
     );
 
     res.status(200).json({
@@ -1243,6 +1250,11 @@ const logoutAllDevices = async (req, res, next) => {
     } else {
       // Remove all devices
       user.devices = [];
+      // Clear all push tokens when logging out everywhere
+      await NotificationSettings.updateOne(
+        { user_id: user._id },
+        { $set: { expo_push_tokens: [] } },
+      );
     }
 
     user.device_id = null; // Clear legacy field

@@ -3,6 +3,7 @@ const DriverApplication = require("../models/DriverApplication");
 const User = require("../models/User");
 const AdminNotification = require("../models/AdminNotification");
 const UserNotification = require("../models/UserNotification");
+const { createAndPush } = require("../services/notificationService");
 const {
   sendDriverApplicationReceivedEmail,
 } = require("../services/emailService");
@@ -358,18 +359,14 @@ const updateDriverProfile = async (req, res, next) => {
 
     await driver.save();
 
-    // Notify driver about profile update
-    try {
-      await UserNotification.create({
-        user_id: req.user._id,
-        title: "Driver Profile Updated",
-        message: "Your driver profile has been updated successfully.",
-        type: "account",
-        metadata: { action: "driver_profile_updated" },
-      });
-    } catch (e) {
-      console.error("Notification failed:", e.message);
-    }
+    // Notify driver about profile update (DB + push)
+    await createAndPush(
+      req.user._id,
+      "Driver Profile Updated",
+      "Your driver profile has been updated successfully.",
+      "account",
+      { action: "driver_profile_updated" },
+    );
 
     res.status(200).json({
       success: true,
@@ -485,18 +482,14 @@ const updateDriverLicense = async (req, res, next) => {
     driver.license_last_updated = new Date();
     await driver.save();
 
-    // Notify driver about license update
-    try {
-      await UserNotification.create({
-        user_id: req.user._id,
-        title: "License Updated",
-        message: "Your driver's license has been updated successfully.",
-        type: "account",
-        metadata: { action: "license_updated" },
-      });
-    } catch (e) {
-      console.error("Notification failed:", e.message);
-    }
+    // Notify driver about license update (DB + push)
+    await createAndPush(
+      req.user._id,
+      "License Updated",
+      "Your driver's license has been updated successfully.",
+      "account",
+      { action: "license_updated" },
+    );
 
     res.status(200).json({
       success: true,
@@ -554,18 +547,14 @@ const updateVehicleImage = async (req, res, next) => {
     driver.vehicle_image = vehicle_image;
     await driver.save();
 
-    // Notify driver about vehicle image update
-    try {
-      await UserNotification.create({
-        user_id: req.user._id,
-        title: "Vehicle Image Updated",
-        message: "Your vehicle image has been updated successfully.",
-        type: "account",
-        metadata: { action: "vehicle_image_updated" },
-      });
-    } catch (e) {
-      console.error("Notification failed:", e.message);
-    }
+    // Notify driver about vehicle image update (DB + push)
+    await createAndPush(
+      req.user._id,
+      "Vehicle Image Updated",
+      "Your vehicle image has been updated successfully.",
+      "account",
+      { action: "vehicle_image_updated" },
+    );
 
     res.status(200).json({
       success: true,

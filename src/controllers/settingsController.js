@@ -152,6 +152,18 @@ const registerPushToken = async (req, res, next) => {
       });
     }
 
+    // ── CRITICAL: Remove this push token from ALL other users first ──────
+    // When User A logs out and User B logs in on the same device, the Expo
+    // push token stays identical. If we don't strip it from User A's
+    // settings, both users receive each other's push notifications.
+    await NotificationSettings.updateMany(
+      {
+        user_id: { $ne: req.user._id },
+        "expo_push_tokens.token": push_token,
+      },
+      { $pull: { expo_push_tokens: { token: push_token } } },
+    );
+
     let settings = await NotificationSettings.findOne({
       user_id: req.user._id,
     });
@@ -162,19 +174,33 @@ const registerPushToken = async (req, res, next) => {
       });
     }
 
-    // Check if token already exists
-    const existingToken = settings.expo_push_tokens.find(
-      (t) => t.token === push_token,
-    );
-
-    if (!existingToken) {
-      settings.expo_push_tokens.push({
-        token: push_token,
-        device_id: device_id || null,
-        platform: platform || "android",
-      });
-      await settings.save();
+    // Remove stale tokens for the same device before adding the new one.
+    // This prevents duplicate OS notifications when Expo rotates the token
+    // (e.g. app reinstall, cache clear).
+    if (device_id) {
+      settings.expo_push_tokens = settings.expo_push_tokens.filter(
+        (t) => t.device_id !== device_id && t.token !== push_token,
+      );
+    } else {
+      const plat = platform || "android";
+      settings.expo_push_tokens = settings.expo_push_tokens.filter(
+        (t) => t.platform !== plat && t.token !== push_token,
+      );
     }
+
+    // Add the current token
+    settings.expo_push_tokens.push({
+      token: push_token,
+      device_id: device_id || null,
+      platform: platform || "android",
+    });
+
+    // Safety cap: keep only the 3 most recent tokens per user
+    if (settings.expo_push_tokens.length > 3) {
+      settings.expo_push_tokens = settings.expo_push_tokens.slice(-3);
+    }
+
+    await settings.save();
 
     res.status(200).json({
       success: true,

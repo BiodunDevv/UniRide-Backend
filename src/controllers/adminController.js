@@ -20,6 +20,10 @@ const {
 const {
   sendNotificationToRole,
 } = require("../services/pushNotificationService");
+const {
+  createAndPush,
+  createBulkAndPush,
+} = require("../services/notificationService");
 
 /**
  * @swagger
@@ -396,6 +400,19 @@ const approveDriver = async (req, res, next) => {
       });
     } catch (notificationError) {
       console.error("Error creating notification:", notificationError.message);
+    }
+
+    // Notify the driver user (in-app + push)
+    try {
+      await createAndPush(
+        user._id,
+        "Application Approved! 🎉",
+        "Congratulations! Your driver application has been approved. You can now go online and start accepting rides.",
+        "account",
+        { action: "driver_approved", driver_id: driver._id.toString() },
+      );
+    } catch (e) {
+      console.error("Driver approval user notification failed:", e.message);
     }
 
     res.status(200).json({
@@ -1208,6 +1225,19 @@ const deleteUser = async (req, res, next) => {
         );
       }
 
+      // Notify the user they have been flagged
+      try {
+        await createAndPush(
+          user._id,
+          "Account Suspended",
+          "Your account has been suspended by an administrator. Please contact support for assistance.",
+          "account",
+          { action: "account_flagged" },
+        );
+      } catch (e) {
+        console.error("User flag notification failed:", e.message);
+      }
+
       return res.status(200).json({
         success: true,
         message:
@@ -1371,6 +1401,19 @@ const deleteDriver = async (req, res, next) => {
         );
       }
 
+      // Notify the driver they have been flagged
+      try {
+        await createAndPush(
+          driver.user_id._id,
+          "Account Suspended",
+          "Your driver account has been suspended by an administrator. Please contact support for assistance.",
+          "account",
+          { action: "driver_account_flagged" },
+        );
+      } catch (e) {
+        console.error("Driver flag notification failed:", e.message);
+      }
+
       return res.status(200).json({
         success: true,
         message:
@@ -1428,6 +1471,21 @@ const flagUser = async (req, res, next) => {
         success: false,
         message: "User not found",
       });
+    }
+
+    // Notify the user about their account status change
+    try {
+      await createAndPush(
+        user._id,
+        is_flagged ? "Account Suspended" : "Account Reinstated",
+        is_flagged
+          ? "Your account has been suspended. Please contact support for more information."
+          : "Your account has been reinstated. You can now use UniRide again.",
+        "account",
+        { action: is_flagged ? "account_flagged" : "account_unflagged" },
+      );
+    } catch (e) {
+      console.error("Flag notification failed:", e.message);
     }
 
     res.status(200).json({
@@ -2436,45 +2494,60 @@ const sendBroadcastMessage = async (req, res, next) => {
       status: "sending",
     });
 
-    // Send push notifications asynchronously
+    // ── Resolve target users once ─────────────────────────────────────
+    let userFilter = {};
+    if (target_audience === "users") userFilter = { role: "user" };
+    else if (target_audience === "drivers") userFilter = { role: "driver" };
+    else if (target_audience === "admins")
+      userFilter = { role: { $in: ["admin", "super_admin"] } };
+    // target_audience === "all" → empty filter → all users
+
+    const targetUsers = await User.find(userFilter).select(
+      "_id name email role",
+    );
+    const targetUserIds = targetUsers.map((u) => u._id);
+
+    // ── 1. Save in-app notifications + send push (DB first, then push) ─
+    //    Uses dedup_key to prevent duplicates if the request is retried.
     if (notification_type === "push" || notification_type === "both") {
-      const pushResult = await sendNotificationToRole({
-        role: target_audience,
+      const { dbCreated, pushResult } = await createBulkAndPush(
+        targetUserIds,
         title,
         message,
-        data: {
+        "broadcast",
+        {
+          dedup_key: `broadcast_${broadcast._id}`,
           broadcast_id: broadcast._id.toString(),
           sent_by: req.user.name,
+          target_audience,
         },
-        notificationType: "broadcast_messages",
-      });
+      );
 
-      broadcast.total_recipients = pushResult.total || 0;
+      broadcast.total_recipients = pushResult.total || targetUserIds.length;
       broadcast.successful_sends = pushResult.successful || 0;
       broadcast.failed_sends = pushResult.failed || 0;
       broadcast.skipped_sends = pushResult.skipped || 0;
+    } else {
+      // notification_type === "email" only — still save in-app records
+      const { dbCreated } = await createBulkAndPush(
+        targetUserIds,
+        title,
+        message,
+        "broadcast",
+        {
+          dedup_key: `broadcast_${broadcast._id}`,
+          broadcast_id: broadcast._id.toString(),
+          sent_by: req.user.name,
+          target_audience,
+        },
+      );
+      broadcast.total_recipients = targetUsers.length;
     }
 
-    // Send emails if notification_type is 'email' or 'both'
+    // ── 2. Send emails if requested ───────────────────────────────────
     if (notification_type === "email" || notification_type === "both") {
       try {
-        // Determine which users to send emails to based on target_audience
-        let userFilter = {};
-        if (target_audience === "users") {
-          userFilter = { role: "user" };
-        } else if (target_audience === "drivers") {
-          userFilter = { role: "driver" };
-        } else if (target_audience === "admins") {
-          userFilter = { role: { $in: ["admin", "super_admin"] } };
-        } else if (target_audience === "all") {
-          userFilter = {}; // All users
-        }
-
-        // Get users and their notification settings
-        const users = await User.find(userFilter).select("name email role");
-
-        // Get notification settings for these users
-        const userIds = users.map((u) => u._id);
+        const userIds = targetUsers.map((u) => u._id);
         const settingsMap = await NotificationSettings.find({
           user_id: { $in: userIds },
           email_notifications_enabled: true,
@@ -2490,15 +2563,9 @@ const sendBroadcastMessage = async (req, res, next) => {
         let emailSuccessCount = 0;
         let emailFailCount = 0;
 
-        // Send emails to users who have email notifications enabled
-        for (const user of users) {
+        for (const user of targetUsers) {
           const userIdStr = user._id.toString();
-          const settings = settingsMap[userIdStr];
-
-          // Skip if user hasn't enabled email notifications or broadcast messages
-          if (!settings) {
-            continue;
-          }
+          if (!settingsMap[userIdStr]) continue;
 
           try {
             await sendBroadcastEmail({
@@ -2520,54 +2587,19 @@ const sendBroadcastMessage = async (req, res, next) => {
           }
         }
 
-        // Update broadcast stats to include email sends
-        if (notification_type === "email") {
-          // Email only
-          broadcast.total_recipients = users.length;
-          broadcast.successful_sends = emailSuccessCount;
-          broadcast.failed_sends = emailFailCount;
-        } else {
-          // Both push and email
-          broadcast.total_recipients += users.length;
-          broadcast.successful_sends += emailSuccessCount;
-          broadcast.failed_sends += emailFailCount;
-        }
+        // Accumulate email stats
+        broadcast.total_recipients =
+          (broadcast.total_recipients || 0) + targetUsers.length;
+        broadcast.successful_sends =
+          (broadcast.successful_sends || 0) + emailSuccessCount;
+        broadcast.failed_sends = (broadcast.failed_sends || 0) + emailFailCount;
 
         console.log(
           `📧 Broadcast emails sent: ${emailSuccessCount} successful, ${emailFailCount} failed`,
         );
       } catch (emailError) {
         console.error("Error sending broadcast emails:", emailError.message);
-        // Don't fail the entire broadcast if emails fail
       }
-    }
-
-    // Create in-app notifications for target users
-    try {
-      let notifFilter = {};
-      if (target_audience === "users") notifFilter = { role: "user" };
-      else if (target_audience === "drivers") notifFilter = { role: "driver" };
-      else if (target_audience === "admins")
-        notifFilter = { role: { $in: ["admin", "super_admin"] } };
-
-      const targetUsers = await User.find(notifFilter).select("_id");
-      if (targetUsers.length > 0) {
-        const notifications = targetUsers.map((u) => ({
-          user_id: u._id,
-          title,
-          message,
-          type: "broadcast",
-          metadata: {
-            broadcast_id: broadcast._id.toString(),
-            sent_by: req.user.name,
-            target_audience,
-          },
-        }));
-        await UserNotification.insertMany(notifications);
-        console.log(`📬 Created ${notifications.length} in-app notifications`);
-      }
-    } catch (notifError) {
-      console.error("Error creating in-app notifications:", notifError.message);
     }
 
     broadcast.status = "completed";
@@ -2711,6 +2743,19 @@ const adminUpdateDriver = async (req, res, next) => {
       "name email role email_verified is_flagged createdAt profile_picture",
     );
 
+    // Notify the driver about admin changes to their profile
+    try {
+      await createAndPush(
+        driver.user_id,
+        "Profile Updated by Admin",
+        "An administrator has updated your driver profile. Please review the changes in your profile settings.",
+        "account",
+        { action: "admin_profile_update" },
+      );
+    } catch (e) {
+      console.error("Admin driver update notification failed:", e.message);
+    }
+
     res.status(200).json({
       success: true,
       message: "Driver updated successfully",
@@ -2752,6 +2797,19 @@ const resetDriverLicense = async (req, res, next) => {
 
     driver.license_last_updated = null;
     await driver.save();
+
+    // Notify the driver they can update their license again
+    try {
+      await createAndPush(
+        driver.user_id,
+        "License Update Available",
+        "An administrator has reset your license update restriction. You can now upload a new driver's license.",
+        "account",
+        { action: "license_reset" },
+      );
+    } catch (e) {
+      console.error("License reset notification failed:", e.message);
+    }
 
     res.status(200).json({
       success: true,

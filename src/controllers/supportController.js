@@ -1,6 +1,7 @@
 const SupportTicket = require("../models/SupportTicket");
 const User = require("../models/User");
 const AdminNotification = require("../models/AdminNotification");
+const { createAndPush } = require("../services/notificationService");
 const { getIO } = require("../utils/socketManager");
 
 /**
@@ -525,6 +526,21 @@ const addMessage = async (req, res, next) => {
       .populate("assigned_to", "name email")
       .populate("messages.sender_id", "name role");
 
+    // If admin/agent replied, send push notification to the ticket owner
+    if (isAdmin && ticket.user_id) {
+      try {
+        await createAndPush(
+          ticket.user_id,
+          "New Support Reply 💬",
+          `${req.user.name} replied to your support ticket: "${ticket.subject}".`,
+          "system",
+          { action: "support_reply", ticket_id: ticket._id.toString() },
+        );
+      } catch (e) {
+        console.error("Support reply notification failed:", e.message);
+      }
+    }
+
     res.status(200).json({
       success: true,
       message: "Message added successfully",
@@ -609,6 +625,21 @@ const resolveTicket = async (req, res, next) => {
       });
     } catch (notificationError) {
       console.error("Error creating notification:", notificationError.message);
+    }
+
+    // Notify ticket owner that their ticket was resolved
+    if (ticket.user_id) {
+      try {
+        await createAndPush(
+          ticket.user_id,
+          "Ticket Resolved ✅",
+          `Your support ticket "${ticket.subject}" has been resolved. If you need further help, you can reopen it by replying.`,
+          "system",
+          { action: "ticket_resolved", ticket_id: ticket._id.toString() },
+        );
+      } catch (e) {
+        console.error("Ticket resolved user notification failed:", e.message);
+      }
     }
 
     res.status(200).json({
@@ -727,6 +758,21 @@ const closeTicket = async (req, res, next) => {
       });
     } catch (notificationError) {
       console.error("Error creating notification:", notificationError.message);
+    }
+
+    // Notify ticket owner that their ticket was closed (only if admin closed it)
+    if (!isTicketOwner && ticket.user_id) {
+      try {
+        await createAndPush(
+          ticket.user_id,
+          "Ticket Closed",
+          `Your support ticket "${updatedTicket.subject}" has been closed. Thank you for contacting UniRide support.`,
+          "system",
+          { action: "ticket_closed", ticket_id: ticket._id.toString() },
+        );
+      } catch (e) {
+        console.error("Ticket closed user notification failed:", e.message);
+      }
     }
 
     res.status(200).json({

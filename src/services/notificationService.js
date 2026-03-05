@@ -8,7 +8,10 @@
  */
 
 const UserNotification = require("../models/UserNotification");
-const { sendPushNotification } = require("./pushNotificationService");
+const {
+  sendPushNotification,
+  sendBulkPushNotification,
+} = require("./pushNotificationService");
 
 let io; // set from server.js via setSocketIO()
 
@@ -16,15 +19,28 @@ const setSocketIO = (socketIO) => {
   io = socketIO;
 };
 
-// ─── Internal helper ─────────────────────────────────────────────────────────
+// ─── Internal helpers ────────────────────────────────────────────────────────
+
 /**
  * Save a UserNotification record AND send an Expo push.
  * Both are fire-and-forget — a failure here must never crash the caller.
  */
-const createAndPush = async (userId, title, message, type = "system", metadata = {}) => {
+const createAndPush = async (
+  userId,
+  title,
+  message,
+  type = "system",
+  metadata = {},
+) => {
   try {
     // 1. Persist in-app notification
-    await UserNotification.create({ user_id: userId, title, message, type, metadata });
+    await UserNotification.create({
+      user_id: userId,
+      title,
+      message,
+      type,
+      metadata,
+    });
   } catch (err) {
     console.error("[Notify] Failed to save in-app notification:", err.message);
   }
@@ -41,6 +57,79 @@ const createAndPush = async (userId, title, message, type = "system", metadata =
   } catch (err) {
     console.error("[Notify] Failed to send push notification:", err.message);
   }
+};
+
+/**
+ * Bulk-create UserNotification records for many users, then send push to all.
+ * DB write happens FIRST so the mobile app can fetch the list immediately
+ * when the push arrives.  Includes deduplication by dedup_key in metadata.
+ *
+ * @param {Array<string>} userIds
+ * @param {string} title
+ * @param {string} message
+ * @param {string} type
+ * @param {Object} metadata  — include a unique `dedup_key` to prevent duplicates
+ * @returns {{ dbCreated: number, pushResult: Object }}
+ */
+const createBulkAndPush = async (
+  userIds,
+  title,
+  message,
+  type = "system",
+  metadata = {},
+) => {
+  let dbCreated = 0;
+
+  // ── 1. Save in-app notifications (DB first) ───────────────────────────
+  try {
+    // Deduplication: if metadata has a dedup_key, skip users who already have it
+    let idsToNotify = userIds;
+    if (metadata.dedup_key) {
+      const existing = await UserNotification.find({
+        "metadata.dedup_key": metadata.dedup_key,
+        user_id: { $in: userIds },
+      })
+        .select("user_id")
+        .lean();
+      const existingSet = new Set(existing.map((e) => e.user_id.toString()));
+      idsToNotify = userIds.filter((id) => !existingSet.has(id.toString()));
+    }
+
+    if (idsToNotify.length > 0) {
+      const docs = idsToNotify.map((uid) => ({
+        user_id: uid,
+        title,
+        message,
+        type,
+        metadata,
+      }));
+      const result = await UserNotification.insertMany(docs, {
+        ordered: false,
+      });
+      dbCreated = result.length;
+      console.log(
+        `[Notify] Bulk-created ${dbCreated} in-app notifications (type: ${type})`,
+      );
+    }
+  } catch (err) {
+    console.error("[Notify] Bulk in-app notification error:", err.message);
+  }
+
+  // ── 2. Send push notifications ────────────────────────────────────────
+  let pushResult = { success: false };
+  try {
+    pushResult = await sendBulkPushNotification({
+      user_ids: userIds,
+      title,
+      message,
+      data: metadata,
+      notificationType: type,
+    });
+  } catch (err) {
+    console.error("[Notify] Bulk push notification error:", err.message);
+  }
+
+  return { dbCreated, pushResult };
 };
 
 // ─── Exported notification functions ─────────────────────────────────────────
@@ -65,7 +154,9 @@ const notifyAvailableDrivers = (rideData) => {
     available_seats: rideData.available_seats,
   });
 
-  console.log(`[Notify] Broadcast new ride to available drivers: ${rideData._id}`);
+  console.log(
+    `[Notify] Broadcast new ride to available drivers: ${rideData._id}`,
+  );
 };
 
 /**
@@ -77,17 +168,21 @@ const notifyRideAccepted = (userId, driverData) => {
   if (io) {
     io.to(`user-${userId}`).emit("ride-accepted", {
       driver: driverData,
-      message: "Your ride has been accepted!",
+      message: "A driver has accepted your ride!",
     });
   }
 
-  // Push + in-app (fire-and-forget)
+  const driverName = driverData?.name || "A driver";
+  const pickup = driverData?.pickup || "";
+  const destination = driverData?.destination || "";
+  const route = pickup && destination ? ` from ${pickup} → ${destination}` : "";
+
   createAndPush(
     userId,
-    "Ride Accepted! 🚗",
-    `Your driver ${driverData?.name || "is on the way"}. Get ready!`,
+    "Driver Found! 🚗",
+    `Great news! ${driverName} will be driving your ride${route}. Get ready for your trip!`,
     "ride",
-    { action: "ride_accepted", driver: driverData },
+    { action: "ride_accepted", ...driverData },
   );
 
   console.log(`[Notify] Ride accepted → user ${userId}`);
@@ -105,7 +200,6 @@ const notifyBookingConfirmed = (userId, bookingData) => {
       booking: bookingData,
       message: "Your booking has been confirmed!",
     });
-    // Legacy room name used by some clients
     io.to(`driver-${userId}`).emit("booking-confirmed", {
       booking: bookingData,
       message: "Your booking has been confirmed!",
@@ -114,12 +208,16 @@ const notifyBookingConfirmed = (userId, bookingData) => {
 
   const pickup = bookingData?.pickup || "pickup";
   const destination = bookingData?.destination || "destination";
-  const fare = bookingData?.fare ? ` · ₦${bookingData.fare}` : "";
+  const seats = bookingData?.seats > 1 ? `${bookingData.seats} seats · ` : "";
+  const fare = bookingData?.fare
+    ? `₦${Number(bookingData.fare).toLocaleString()}`
+    : "";
+  const fareInfo = fare ? ` · ${seats}${fare}` : seats ? ` · ${seats}` : "";
 
   createAndPush(
     userId,
-    "Booking Confirmed ✅",
-    `Your ride from ${pickup} to ${destination}${fare} is confirmed.`,
+    "Ride Confirmed ✅",
+    `You're all set! ${pickup} → ${destination}${fareInfo}. See you on board!`,
     "booking",
     { action: "booking_confirmed", ...bookingData },
   );
@@ -136,17 +234,19 @@ const notifyDriverNewBooking = (driverUserId, bookingData) => {
   if (io) {
     io.to(`user-feed-${driverUserId}`).emit("booking:new_request", {
       booking: bookingData,
-      message: "A passenger wants to join your ride",
+      message: "New ride request received",
     });
   }
 
+  const passengerName = bookingData?.passenger_name || "A passenger";
   const pickup = bookingData?.pickup || "pickup";
   const destination = bookingData?.destination || "destination";
+  const seats = bookingData?.seats || 1;
 
   createAndPush(
     driverUserId,
-    "New Booking Request 🙋",
-    `A passenger wants to join your ride from ${pickup} to ${destination}.`,
+    "New Ride Request 📋",
+    `${passengerName} requested ${seats} seat(s) on your ${pickup} → ${destination} ride. Tap to review.`,
     "booking",
     { action: "new_booking_request", ...bookingData },
   );
@@ -173,8 +273,8 @@ const notifyBookingDeclined = (userId, bookingData) => {
 
   createAndPush(
     userId,
-    "Booking Declined",
-    `Your booking request from ${pickup} to ${destination} was not accepted. Please try another ride.`,
+    "Request Not Accepted",
+    `Your ride request (${pickup} → ${destination}) wasn't accepted this time. Browse other available rides to find your trip.`,
     "booking",
     { action: "booking_declined", ...bookingData },
   );
@@ -195,10 +295,15 @@ const notifyDriverBookingCancelled = (driverUserId, cancellationData) => {
     });
   }
 
+  const passengerName = cancellationData?.passenger_name || "A passenger";
+  const seatsInfo = cancellationData?.seats_freed
+    ? ` ${cancellationData.seats_freed} seat(s) freed up on your ride.`
+    : "";
+
   createAndPush(
     driverUserId,
-    "Booking Cancelled",
-    `A passenger has cancelled their booking. ${cancellationData?.seats_freed ? `${cancellationData.seats_freed} seat(s) are now available.` : ""}`,
+    "Passenger Cancelled",
+    `${passengerName} cancelled their booking.${seatsInfo}`,
     "booking",
     { action: "booking_cancelled_by_user", ...cancellationData },
   );
@@ -215,14 +320,18 @@ const notifyDriverArrival = (userId, driverData) => {
   if (io) {
     io.to(`user-${userId}`).emit("driver-arrived", {
       driver: driverData,
-      message: "Your driver has arrived at the pickup location",
+      message: "Your driver has arrived",
     });
   }
 
+  const driverName = driverData?.name
+    ? `${driverData.name} is`
+    : "Your driver is";
+
   createAndPush(
     userId,
-    "Driver Arrived! 📍",
-    `Your driver ${driverData?.name || ""} has arrived at the pickup location. Please head over now.`,
+    "Your Driver Is Here 📍",
+    `${driverName} waiting at the pickup point. Please head there now!`,
     "ride",
     { action: "driver_arrived", driver: driverData },
   );
@@ -242,17 +351,19 @@ const notifyRideEnded = (userId, driverId, rideData) => {
       ride: rideData,
       message: "Your ride has been completed",
     });
-    io.to(`user-${driverId}`).emit("ride-ended", {
-      ride: rideData,
-      message: "Ride completed successfully",
-    });
+    if (driverId) {
+      io.to(`user-${driverId}`).emit("ride-ended", {
+        ride: rideData,
+        message: "Ride completed successfully",
+      });
+    }
   }
 
   // Notify passenger
   createAndPush(
     userId,
-    "Ride Completed 🎉",
-    "Your ride has been completed. Thank you for riding with UniRide!",
+    "Trip Complete! 🎉",
+    "You've arrived! Thanks for riding with UniRide. Don't forget to rate your driver.",
     "ride",
     { action: "ride_completed", ride_id: rideData?._id },
   );
@@ -261,8 +372,8 @@ const notifyRideEnded = (userId, driverId, rideData) => {
   if (driverId) {
     createAndPush(
       driverId,
-      "Ride Completed ✅",
-      "You have successfully completed a ride. Great job!",
+      "Trip Complete ✅",
+      "Nice work! You've successfully completed a trip.",
       "ride",
       { action: "ride_completed", ride_id: rideData?._id },
     );
@@ -294,32 +405,90 @@ const notifyRideCancellation = (targetId, targetType, cancellationData) => {
   }
 
   const isDriver = targetType === "driver";
-  const title = isDriver ? "Ride Cancelled" : "Your Ride Was Cancelled";
+  const title = "Ride Cancelled";
   const message = isDriver
     ? "A ride you were assigned to has been cancelled."
-    : "Your ride has been cancelled. Please book another ride.";
+    : "Your upcoming ride has been cancelled. Book another ride anytime — we've got you covered.";
 
-  createAndPush(
-    targetId,
-    title,
-    message,
-    "ride",
-    { action: "ride_cancelled", ...cancellationData },
-  );
+  createAndPush(targetId, title, message, "ride", {
+    action: "ride_cancelled",
+    ...cancellationData,
+  });
 
   console.log(`[Notify] Ride cancelled → ${targetType} ${targetId}`);
 };
 
+/**
+ * Notify a driver that a passenger was auto-added to their ride.
+ * Used when auto_accept_bookings is enabled.
+ * @param {String} driverUserId
+ * @param {Object} data
+ */
+const notifyDriverPassengerJoined = (driverUserId, data) => {
+  if (io) {
+    io.to(`user-feed-${driverUserId}`).emit("booking:new_passenger", {
+      ...data,
+      message: "A new passenger joined your ride",
+    });
+  }
+
+  const passengerName = data?.passenger_name || "A passenger";
+  const pickup = data?.pickup || "pickup";
+  const destination = data?.destination || "destination";
+  const seats = data?.seats || 1;
+
+  createAndPush(
+    driverUserId,
+    "New Passenger Onboard 🙋",
+    `${passengerName} just booked ${seats} seat(s) on your ${pickup} → ${destination} ride.`,
+    "booking",
+    { action: "passenger_joined", ...data },
+  );
+
+  console.log(`[Notify] Passenger joined → driver user ${driverUserId}`);
+};
+
+/**
+ * Notify a user that a driver ride matching their pending request is available.
+ * @param {String} userId
+ * @param {Object} rideData
+ */
+const notifyMatchingRideAvailable = (userId, rideData) => {
+  if (io) {
+    io.to(`user-feed-${userId}`).emit("ride:matching_available", {
+      ride: rideData,
+      message: "A ride matching your route is available!",
+    });
+  }
+
+  const pickup = rideData?.pickup || "pickup";
+  const destination = rideData?.destination || "destination";
+
+  createAndPush(
+    userId,
+    "Ride Available! 🚗",
+    `A driver is heading ${pickup} → ${destination}. Book now before seats fill up!`,
+    "ride",
+    { action: "matching_ride_available", ride_id: rideData?.ride_id },
+  );
+
+  console.log(`[Notify] Matching ride available → user ${userId}`);
+};
+
 module.exports = {
   setSocketIO,
+  createAndPush,
+  createBulkAndPush,
   notifyAvailableDrivers,
   notifyRideAccepted,
   notifyBookingConfirmed,
   notifyDriverNewBooking,
   notifyBookingDeclined,
   notifyDriverBookingCancelled,
+  notifyDriverPassengerJoined,
   notifyDriverArrival,
   notifyRideEnded,
+  notifyMatchingRideAvailable,
   updateDriverLocation,
   notifyRideCancellation,
 };
