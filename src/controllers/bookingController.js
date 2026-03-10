@@ -423,14 +423,12 @@ const checkInRide = async (req, res, next) => {
     }
 
     booking.check_in_status = "checked_in";
-    booking.status = "in_progress";
+    // NOTE: Do NOT change booking.status or ride.status here.
+    // Check-in only marks attendance. The ride transitions to "in_progress"
+    // when the driver explicitly starts the ride.
     await booking.save();
 
     const ride = await Ride.findById(booking.ride_id._id);
-    if (ride.status === "scheduled" || ride.status === "accepted") {
-      ride.status = "in_progress";
-      await ride.save();
-    }
 
     // Notify driver about passenger check-in
     if (ride.driver_id) {
@@ -470,10 +468,10 @@ const checkInRide = async (req, res, next) => {
           });
         }
       }
-      // Emit ride status change so all participants know
+      // Emit ride status change so all participants know about check-in
       io.to(`ride-${ride._id}`).emit("booking:updated", {
         booking_id: booking._id.toString(),
-        status: "in_progress",
+        check_in_status: "checked_in",
         ride_id: ride._id.toString(),
       });
     } catch (e) {
@@ -501,20 +499,50 @@ const updatePaymentStatus = async (req, res, next) => {
     booking.payment_status = payment_status;
     await booking.save();
 
+    // Emit real-time socket event so both sides update instantly
+    try {
+      const io = getIO();
+      const rideId =
+        typeof booking.ride_id === "object"
+          ? booking.ride_id._id
+          : booking.ride_id;
+
+      // Notify the ride room (driver + all passengers)
+      if (rideId) {
+        io.to(`ride-${rideId}`).emit("booking:updated", {
+          booking_id: booking._id.toString(),
+          payment_status,
+          ride_id: rideId.toString(),
+        });
+      }
+
+      // Notify the passenger's personal feed
+      io.to(`user-feed-${booking.user_id}`).emit("booking:updated", {
+        booking_id: booking._id.toString(),
+        payment_status,
+      });
+    } catch (e) {
+      console.log("Socket emit failed (non-critical):", e.message);
+    }
+
     // Notify the passenger about payment status change
     try {
       const statusLabel =
         payment_status === "paid"
-          ? "Payment Received ✅"
-          : payment_status === "refunded"
-            ? "Refund Processed 💰"
-            : `Payment ${payment_status.charAt(0).toUpperCase() + payment_status.slice(1)}`;
+          ? "Payment Confirmed ✅"
+          : payment_status === "sent"
+            ? "Transfer Noted 📝"
+            : payment_status === "refunded"
+              ? "Refund Processed 💰"
+              : `Payment ${payment_status.charAt(0).toUpperCase() + payment_status.slice(1)}`;
       const statusMsg =
         payment_status === "paid"
-          ? "Your ride payment has been received and confirmed. Thank you!"
-          : payment_status === "refunded"
-            ? "Your ride payment has been refunded. The amount will reflect in your account shortly."
-            : `Your payment status has been updated to: ${payment_status}.`;
+          ? "Your driver has confirmed receiving your transfer payment. Thank you!"
+          : payment_status === "sent"
+            ? "Your transfer has been noted. The driver will confirm receipt shortly."
+            : payment_status === "refunded"
+              ? "Your ride payment has been refunded. The amount will reflect in your account shortly."
+              : `Your payment status has been updated to: ${payment_status}.`;
       notificationService.createAndPush(
         booking.user_id,
         statusLabel,
@@ -528,6 +556,40 @@ const updatePaymentStatus = async (req, res, next) => {
       );
     } catch (e) {
       console.error("Payment notification failed:", e.message);
+    }
+
+    // If user marked as "sent", also notify the driver to confirm
+    if (payment_status === "sent") {
+      try {
+        const rideId =
+          typeof booking.ride_id === "object"
+            ? booking.ride_id._id || booking.ride_id
+            : booking.ride_id;
+        const ride = await Ride.findById(rideId);
+        if (ride && ride.driver_id) {
+          const driverDoc = await Driver.findById(ride.driver_id).select(
+            "user_id",
+          );
+          if (driverDoc) {
+            const passenger = await User.findById(booking.user_id).select(
+              "name",
+            );
+            notificationService.createAndPush(
+              driverDoc.user_id,
+              "Transfer Payment Sent 💸",
+              `${passenger?.name || "A passenger"} says they've sent the transfer payment. Please confirm receipt.`,
+              "booking",
+              {
+                action: "payment_sent_by_passenger",
+                booking_id: booking._id.toString(),
+                ride_id: rideId.toString(),
+              },
+            );
+          }
+        }
+      } catch (e) {
+        console.error("Driver payment notification failed:", e.message);
+      }
     }
 
     res.status(200).json({
@@ -752,6 +814,106 @@ const getDriverBookings = async (req, res, next) => {
   }
 };
 
+// ── Driver: Get Earnings Summary ─────────────────────────────────────────────
+const getDriverEarnings = async (req, res, next) => {
+  try {
+    const driver = await Driver.findOne({ user_id: req.user._id });
+    if (!driver)
+      return res
+        .status(404)
+        .json({ success: false, message: "Driver profile not found" });
+
+    // Find all completed rides for this driver
+    const completedRides = await Ride.find({
+      driver_id: driver._id,
+      status: "completed",
+    })
+      .populate("pickup_location_id", "name short_name")
+      .populate("destination_id", "name short_name")
+      .sort({ ended_at: -1 });
+
+    const rideIds = completedRides.map((r) => r._id);
+
+    // Find all completed bookings for those rides
+    const completedBookings = await Booking.find({
+      ride_id: { $in: rideIds },
+      status: "completed",
+    });
+
+    // Calculate earnings per ride
+    const rideEarnings = completedRides.map((ride) => {
+      const rideBks = completedBookings.filter(
+        (b) => b.ride_id.toString() === ride._id.toString(),
+      );
+      const totalEarned = rideBks.reduce(
+        (sum, b) => sum + (b.total_fare || ride.fare * b.seats_requested),
+        0,
+      );
+      const passengers = rideBks.length;
+      return {
+        ride_id: ride._id,
+        pickup:
+          ride.pickup_location_id?.short_name ||
+          ride.pickup_location_id?.name ||
+          "Pickup",
+        destination:
+          ride.destination_id?.short_name ||
+          ride.destination_id?.name ||
+          "Destination",
+        fare: ride.fare,
+        passengers,
+        total_earned: totalEarned,
+        ended_at: ride.ended_at,
+        departure_time: ride.departure_time,
+      };
+    });
+
+    // Aggregate totals
+    const totalEarnings = rideEarnings.reduce(
+      (sum, r) => sum + r.total_earned,
+      0,
+    );
+    const totalRides = completedRides.length;
+    const totalPassengers = completedBookings.length;
+
+    // Today's earnings
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const todayEarnings = rideEarnings
+      .filter((r) => r.ended_at && new Date(r.ended_at) >= today)
+      .reduce((sum, r) => sum + r.total_earned, 0);
+
+    // This week earnings
+    const weekStart = new Date();
+    weekStart.setDate(weekStart.getDate() - weekStart.getDay());
+    weekStart.setHours(0, 0, 0, 0);
+    const weekEarnings = rideEarnings
+      .filter((r) => r.ended_at && new Date(r.ended_at) >= weekStart)
+      .reduce((sum, r) => sum + r.total_earned, 0);
+
+    // This month earnings
+    const monthStart = new Date(today.getFullYear(), today.getMonth(), 1);
+    const monthEarnings = rideEarnings
+      .filter((r) => r.ended_at && new Date(r.ended_at) >= monthStart)
+      .reduce((sum, r) => sum + r.total_earned, 0);
+
+    res.status(200).json({
+      success: true,
+      data: {
+        total_earnings: totalEarnings,
+        today_earnings: todayEarnings,
+        week_earnings: weekEarnings,
+        month_earnings: monthEarnings,
+        total_rides: totalRides,
+        total_passengers: totalPassengers,
+        rides: rideEarnings,
+      },
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
 module.exports = {
   requestRide,
   acceptBooking,
@@ -763,4 +925,5 @@ module.exports = {
   getMyBookings,
   cancelBooking,
   getDriverBookings,
+  getDriverEarnings,
 };

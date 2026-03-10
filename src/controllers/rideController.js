@@ -564,6 +564,97 @@ const updateDriverLocation = async (req, res, next) => {
   }
 };
 
+// ── Driver: Start ride (transition to in_progress) ──────────────────────────
+const startRide = async (req, res, next) => {
+  try {
+    const ride = await Ride.findById(req.params.id);
+    if (!ride)
+      return res
+        .status(404)
+        .json({ success: false, message: "Ride not found" });
+
+    const driver = await Driver.findOne({ user_id: req.user._id });
+    if (
+      !driver ||
+      !ride.driver_id ||
+      ride.driver_id.toString() !== driver._id.toString()
+    ) {
+      return res
+        .status(403)
+        .json({ success: false, message: "Not authorized" });
+    }
+
+    if (ride.status === "in_progress") {
+      // Already started — just return success
+      return res
+        .status(200)
+        .json({ success: true, message: "Ride already started", data: ride });
+    }
+
+    if (!["accepted", "available", "scheduled"].includes(ride.status)) {
+      return res.status(400).json({
+        success: false,
+        message: `Cannot start ride with status: ${ride.status}`,
+      });
+    }
+
+    // Require at least one checked-in passenger
+    const checkedIn = await Booking.countDocuments({
+      ride_id: ride._id,
+      status: "accepted",
+      check_in_status: "checked_in",
+    });
+    if (checkedIn === 0) {
+      return res.status(400).json({
+        success: false,
+        message: "At least one passenger must check in before starting",
+      });
+    }
+
+    ride.status = "in_progress";
+    await ride.save();
+
+    // Update all accepted bookings to in_progress
+    await Booking.updateMany(
+      { ride_id: ride._id, status: "accepted" },
+      { status: "in_progress" },
+    );
+
+    // Emit socket events
+    try {
+      const io = getIO();
+      io.to(`ride-${ride._id}`).emit("ride:started", {
+        ride_id: ride._id.toString(),
+      });
+      // Notify all passengers
+      const rideBookings = await Booking.find({
+        ride_id: ride._id,
+        status: "in_progress",
+      }).select("user_id");
+      for (const b of rideBookings) {
+        io.to(`user-feed-${b.user_id}`).emit("ride:started", {
+          ride_id: ride._id.toString(),
+        });
+        notificationService.createAndPush(
+          b.user_id.toString(),
+          "Ride Started 🚗",
+          "Your driver has started the trip. Enjoy the ride!",
+          "ride",
+          { action: "ride_started", ride_id: ride._id.toString() },
+        );
+      }
+    } catch (e) {
+      console.log("Socket emit failed (non-critical):", e.message);
+    }
+
+    res
+      .status(200)
+      .json({ success: true, message: "Ride started", data: ride });
+  } catch (error) {
+    next(error);
+  }
+};
+
 // ── Driver: End ride ────────────────────────────────────────────────────────
 const endRide = async (req, res, next) => {
   try {
@@ -695,6 +786,7 @@ module.exports = {
   updateRide,
   cancelRide,
   updateDriverLocation,
+  startRide,
   endRide,
   getMyRides,
   acceptRide,

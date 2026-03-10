@@ -20,7 +20,7 @@ const mongoose = require("mongoose");
  *           enum: [cash, transfer]
  *         payment_status:
  *           type: string
- *           enum: [pending, paid, not_applicable]
+ *           enum: [pending, sent, paid, not_applicable]
  *         bank_details_visible:
  *           type: boolean
  *         booking_time:
@@ -65,7 +65,7 @@ const bookingSchema = new mongoose.Schema(
     },
     payment_status: {
       type: String,
-      enum: ["pending", "paid", "not_applicable"],
+      enum: ["pending", "sent", "paid", "not_applicable"],
       default: function () {
         return this.payment_method === "cash" ? "not_applicable" : "pending";
       },
