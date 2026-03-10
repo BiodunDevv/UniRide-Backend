@@ -23,37 +23,10 @@ const app = express();
 // Security middleware
 app.use(helmet());
 
-// CORS configuration
-const allowedOrigins = [
-  "https://uniridee.vercel.app",
-  "http://localhost:3000",
-  "http://localhost:5173",
-  "http://172.20.10.6:3000",
-  process.env.FRONTEND_URL,
-].filter(Boolean);
-
+// CORS configuration — allow all origins for mobile + web compatibility
 app.use(
   cors({
-    origin: function (origin, callback) {
-      // Allow requests with no origin (like mobile apps, Postman, curl, Swagger UI)
-      if (!origin) return callback(null, true);
-
-      // Allow all localhost origins in development
-      if (
-        origin.startsWith("http://localhost:") ||
-        origin.startsWith("http://127.0.0.1:")
-      ) {
-        return callback(null, true);
-      }
-
-      if (allowedOrigins.indexOf(origin) !== -1) {
-        callback(null, true);
-      } else {
-        // Don't throw error, just log and deny
-        console.warn(`CORS blocked origin: ${origin}`);
-        callback(null, false);
-      }
-    },
+    origin: true,
     credentials: true,
     methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
     allowedHeaders: ["Content-Type", "Authorization"],

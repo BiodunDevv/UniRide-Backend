@@ -15,17 +15,9 @@ const PORT = process.env.PORT || 5000;
 const server = http.createServer(app);
 
 // Socket.io setup
-const allowedOrigins = [
-  "https://uniridee.vercel.app",
-  "http://localhost:3000",
-  "http://localhost:5173",
-  "http://172.20.10.6:3000",
-  process.env.FRONTEND_URL,
-].filter(Boolean);
-
 const io = require("socket.io")(server, {
   cors: {
-    origin: allowedOrigins,
+    origin: true,
     methods: ["GET", "POST"],
     credentials: true,
   },
