@@ -1,9 +1,12 @@
 const Driver = require("../models/Driver");
 const DriverApplication = require("../models/DriverApplication");
+const Booking = require("../models/Booking");
+const Ride = require("../models/Ride");
 const User = require("../models/User");
 const AdminNotification = require("../models/AdminNotification");
 const UserNotification = require("../models/UserNotification");
 const { createAndPush } = require("../services/notificationService");
+const { getIO } = require("../utils/socketManager");
 const {
   sendDriverApplicationReceivedEmail,
 } = require("../services/emailService");
@@ -253,6 +256,22 @@ const getApplicationStatus = async (req, res, next) => {
   } catch (error) {
     next(error);
   }
+};
+
+const persistActiveRideLocation = async (driverId, longitude, latitude) => {
+  const activeRide = await Ride.findOne({
+    driver_id: driverId,
+    status: { $in: ["accepted", "in_progress"] },
+  });
+
+  if (!activeRide) return;
+
+  activeRide.current_location = {
+    type: "Point",
+    coordinates: [longitude, latitude],
+  };
+
+  await activeRide.save();
 };
 
 /**
@@ -842,8 +861,6 @@ const checkApplicationByEmail = async (req, res, next) => {
   }
 };
 
-const { getIO } = require("../utils/socketManager");
-
 // ─── Go Online ──────────────────────────────────────────────────────────────
 const goOnline = async (req, res, next) => {
   try {
@@ -876,6 +893,10 @@ const goOnline = async (req, res, next) => {
       type: "Point",
       coordinates: [longitude, latitude],
     };
+    driver.last_known_location = {
+      type: "Point",
+      coordinates: [longitude, latitude],
+    };
     if (heading !== undefined) driver.heading = heading;
     driver.last_online_at = new Date();
     await driver.save();
@@ -898,6 +919,7 @@ const goOnline = async (req, res, next) => {
         available_seats: driver.available_seats,
         location: { latitude, longitude },
         heading: driver.heading,
+        last_online_at: driver.last_online_at,
       });
     } catch (err) {
       console.log("Socket emit failed (non-critical):", err.message);
@@ -909,6 +931,7 @@ const goOnline = async (req, res, next) => {
       data: {
         is_online: driver.is_online,
         current_location: driver.current_location,
+        last_known_location: driver.last_known_location,
       },
     });
   } catch (error) {
@@ -951,6 +974,7 @@ const goOffline = async (req, res, next) => {
         driver_id: driver._id,
         user_id: req.user._id,
         last_known_location: driver.last_known_location,
+        timestamp: driver.last_online_at,
       });
     } catch (err) {
       console.log("Socket emit failed (non-critical):", err.message);
@@ -993,9 +1017,14 @@ const updateDriverLiveLocation = async (req, res, next) => {
       type: "Point",
       coordinates: [longitude, latitude],
     };
+    driver.last_known_location = {
+      type: "Point",
+      coordinates: [longitude, latitude],
+    };
     if (heading !== undefined) driver.heading = heading;
     driver.last_online_at = new Date();
     await driver.save();
+    await persistActiveRideLocation(driver._id, longitude, latitude);
 
     // Broadcast real-time location to all connected clients
     try {
@@ -1126,6 +1155,82 @@ const getDriverLocations = async (req, res, next) => {
   }
 };
 
+const buildActiveRiderQuery = () => ({
+  status: { $in: ["accepted", "in_progress"] },
+});
+
+const formatActiveRider = (booking) => {
+  const user = booking.user_id;
+  const ride = booking.ride_id;
+  const coordinates = user?.current_location?.coordinates;
+
+  return {
+    booking_id: booking._id,
+    user_id: user?._id,
+    name: user?.name || "Passenger",
+    profile_picture: user?.profile_picture || null,
+    email: user?.email || null,
+    ride_id: ride?._id,
+    ride_status: ride?.status || booking.status,
+    booking_status: booking.status,
+    pickup_name:
+      ride?.pickup_location_id?.short_name ||
+      ride?.pickup_location_id?.name ||
+      ride?.pickup_location?.address ||
+      "Pickup",
+    dropoff_name:
+      ride?.destination_id?.short_name ||
+      ride?.destination_id?.name ||
+      ride?.destination?.address ||
+      "Destination",
+    last_updated_at: booking.updatedAt,
+    location: coordinates
+      ? {
+          longitude: coordinates[0],
+          latitude: coordinates[1],
+        }
+      : null,
+  };
+};
+
+// ─── Get Active Rider Locations (for admin map) ────────────────────────────
+const getActiveRiderLocations = async (req, res, next) => {
+  try {
+    const bookings = await Booking.find(buildActiveRiderQuery())
+      .populate({
+        path: "user_id",
+        select: "name profile_picture email current_location",
+      })
+      .populate({
+        path: "ride_id",
+        select:
+          "_id status pickup_location destination pickup_location_id destination_id",
+        populate: [
+          { path: "pickup_location_id", select: "name short_name" },
+          { path: "destination_id", select: "name short_name" },
+        ],
+      })
+      .lean();
+
+    const riders = bookings
+      .filter(
+        (booking) =>
+          booking.user_id?.current_location?.coordinates &&
+          booking.ride_id &&
+          ["accepted", "in_progress"].includes(booking.ride_id.status),
+      )
+      .map(formatActiveRider);
+
+    res.status(200).json({
+      success: true,
+      count: riders.length,
+      data: riders,
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
 // ─── Update User Location ────────────────────────────────────────────────────
 const updateUserLocation = async (req, res, next) => {
   try {
@@ -1144,6 +1249,40 @@ const updateUserLocation = async (req, res, next) => {
         coordinates: [longitude, latitude],
       },
     });
+
+    const activeBookings = await Booking.find({
+      user_id: req.user._id,
+      status: { $in: ["accepted", "in_progress"] },
+    })
+      .populate({
+        path: "ride_id",
+        select:
+          "_id status pickup_location destination pickup_location_id destination_id",
+        populate: [
+          { path: "pickup_location_id", select: "name short_name" },
+          { path: "destination_id", select: "name short_name" },
+        ],
+      })
+      .lean();
+
+    if (activeBookings.length > 0) {
+      const io = getIO();
+      const safeUser = await User.findById(req.user._id)
+        .select("name profile_picture email current_location")
+        .lean();
+
+      for (const booking of activeBookings) {
+        if (!booking.ride_id) continue;
+
+        const riderPayload = formatActiveRider({
+          ...booking,
+          user_id: safeUser,
+          updatedAt: new Date(),
+        });
+
+        io.to("live-map").emit("active-rider-location-updated", riderPayload);
+      }
+    }
 
     res.status(200).json({ success: true, message: "Location updated" });
   } catch (error) {
@@ -1167,5 +1306,6 @@ module.exports = {
   updateDriverLiveLocation,
   getOnlineDrivers,
   getDriverLocations,
+  getActiveRiderLocations,
   updateUserLocation,
 };

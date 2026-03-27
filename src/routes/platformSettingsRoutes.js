@@ -13,7 +13,7 @@ const authorize = require("../middlewares/roleMiddleware");
  * /api/platform-settings:
  *   get:
  *     summary: Get public platform settings
- *     description: Returns platform configuration that mobile apps poll on startup (map provider, fare info, maintenance mode, version requirements, etc.). No authentication required.
+ *     description: Returns platform configuration that mobile apps poll on startup (mobile map availability, fare info, maintenance mode, version requirements, etc.). No authentication required.
  *     tags: [Platform Settings]
  *     responses:
  *       200:
@@ -28,11 +28,6 @@ const authorize = require("../middlewares/roleMiddleware");
  *                 data:
  *                   type: object
  *                   properties:
- *                     map_provider:
- *                       type: string
- *                       enum: [mapbox, expo]
- *                     mapbox_enabled:
- *                       type: boolean
  *                     expo_maps_enabled:
  *                       type: boolean
  *                     fare_per_seat:
@@ -111,11 +106,6 @@ router.get(
  *           schema:
  *             type: object
  *             properties:
- *               map_provider:
- *                 type: string
- *                 enum: [mapbox, expo]
- *               mapbox_enabled:
- *                 type: boolean
  *               expo_maps_enabled:
  *                 type: boolean
  *               fare_per_seat:

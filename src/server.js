@@ -143,13 +143,22 @@ io.on("connection", (socket) => {
   socket.on("passenger-location-stream", (data) => {
     const { user_id, ride_id, latitude, longitude, name, profile_picture } =
       data;
+    const timestamp = new Date();
     if (ride_id) {
       io.to(`ride-${ride_id}`).emit("passenger-location-updated", {
         user_id,
         location: { latitude, longitude },
         name: name || "Passenger",
         profile_picture: profile_picture || null,
-        timestamp: new Date(),
+        timestamp,
+      });
+      io.to("live-map").emit("active-rider-location-updated", {
+        user_id,
+        ride_id,
+        name: name || "Passenger",
+        profile_picture: profile_picture || null,
+        location: { latitude, longitude },
+        last_updated_at: timestamp,
       });
     }
   });

@@ -16,6 +16,7 @@ const {
   updateDriverLiveLocation,
   getOnlineDrivers,
   getDriverLocations,
+  getActiveRiderLocations,
   updateUserLocation,
 } = require("../controllers/driverController");
 const { protect } = require("../middlewares/authMiddleware");
@@ -68,6 +69,12 @@ router.get(
   protect,
   authorize("admin", "super_admin"),
   getDriverLocations,
+);
+router.get(
+  "/active-riders",
+  protect,
+  authorize("admin", "super_admin"),
+  getActiveRiderLocations,
 );
 
 // ── User Location ───────────────────────────────────────────────────────────

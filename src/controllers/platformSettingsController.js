@@ -25,8 +25,6 @@ const getPlatformSettings = async (req, res, next) => {
     res.status(200).json({
       success: true,
       data: {
-        map_provider: settings.map_provider,
-        mapbox_enabled: settings.mapbox_enabled,
         expo_maps_enabled: settings.expo_maps_enabled,
         fare_per_seat: settings.fare_per_seat,
         maintenance_mode: settings.maintenance_mode,
@@ -56,8 +54,6 @@ const getFullPlatformSettings = async (req, res, next) => {
 const updatePlatformSettings = async (req, res, next) => {
   try {
     const allowedFields = [
-      "map_provider",
-      "mapbox_enabled",
       "expo_maps_enabled",
       "fare_per_seat",
       "maintenance_mode",

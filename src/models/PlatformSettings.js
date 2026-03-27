@@ -6,16 +6,7 @@ const mongoose = require("mongoose");
  */
 const platformSettingsSchema = new mongoose.Schema(
   {
-    // ─── Map Provider Settings ──────────────────────────────────────
-    map_provider: {
-      type: String,
-      enum: ["mapbox", "expo"],
-      default: "mapbox",
-    },
-    mapbox_enabled: {
-      type: Boolean,
-      default: true,
-    },
+    // ─── Mobile Map Settings ────────────────────────────────────────
     expo_maps_enabled: {
       type: Boolean,
       default: true,
