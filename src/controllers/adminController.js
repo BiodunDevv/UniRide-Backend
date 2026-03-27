@@ -2101,19 +2101,21 @@ const getDashboard = async (req, res, next) => {
           {
             $project: {
               _id: 0,
-              pickup: {
+              pickup_name: {
                 $ifNull: [
                   { $arrayElemAt: ["$pickup.short_name", 0] },
                   { $arrayElemAt: ["$pickup.name", 0] },
+                  "Unknown pickup",
                 ],
               },
-              destination: {
+              dropoff_name: {
                 $ifNull: [
                   { $arrayElemAt: ["$destination.short_name", 0] },
                   { $arrayElemAt: ["$destination.name", 0] },
+                  "Unknown destination",
                 ],
               },
-              rides: "$count",
+              count: "$count",
               avg_fare: { $round: ["$avg_fare", 0] },
             },
           },
