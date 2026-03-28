@@ -6,10 +6,39 @@ const PlatformSettings = require("../models/PlatformSettings");
 const notificationService = require("../services/notificationService");
 const { getIO } = require("../utils/socketManager");
 
+const ensureUserHasBookingPhone = async (userId) => {
+  const rider = await User.findById(userId).select("name phone");
+  if (!rider) {
+    return {
+      ok: false,
+      status: 404,
+      message: "User not found",
+    };
+  }
+
+  if (!rider.phone || !String(rider.phone).trim()) {
+    return {
+      ok: false,
+      status: 400,
+      message:
+        "Add your phone number in Edit Profile before requesting or booking a ride.",
+    };
+  }
+
+  return { ok: true, rider };
+};
+
 // ── User: Request a ride (creates pending booking) ──────────────────────────
 const requestRide = async (req, res, next) => {
   try {
     const { ride_id, payment_method, seats_requested = 1 } = req.body;
+    const riderCheck = await ensureUserHasBookingPhone(req.user._id);
+    if (!riderCheck.ok) {
+      return res.status(riderCheck.status).json({
+        success: false,
+        message: riderCheck.message,
+      });
+    }
 
     // Fetch platform settings
     const settings = await PlatformSettings.getSettings();
@@ -673,7 +702,10 @@ const getMyBookings = async (req, res, next) => {
           "destination_id",
           {
             path: "driver_id",
-            populate: { path: "user_id", select: "name profile_picture" },
+            populate: {
+              path: "user_id",
+              select: "name profile_picture phone",
+            },
           },
         ],
       })

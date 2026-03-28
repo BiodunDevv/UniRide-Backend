@@ -5,6 +5,7 @@ const {
   checkApplicationByEmail,
   getApplicationStatus,
   getDriverProfile,
+  getPublicDriverProfile,
   updateDriverProfile,
   toggleDriverStatus,
   updateDriverLicense,
@@ -37,6 +38,7 @@ router.get("/banks", getBankList);
 
 // Protected routes - authentication required
 router.get("/status", protect, getApplicationStatus);
+router.get("/public/:id", protect, getPublicDriverProfile);
 router.get("/profile", protect, authorize("driver"), getDriverProfile);
 router.patch("/profile", protect, authorize("driver"), updateDriverProfile);
 router.patch("/license", protect, authorize("driver"), updateDriverLicense);

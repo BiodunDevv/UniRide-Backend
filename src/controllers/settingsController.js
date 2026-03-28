@@ -1,6 +1,141 @@
 const NotificationSettings = require("../models/NotificationSettings");
-const User = require("../models/User");
 const { Expo } = require("expo-server-sdk");
+const {
+  sendPushToSpecificToken,
+} = require("../services/pushNotificationService");
+const {
+  getOrCreateNotificationSettings,
+  attachPushTokenToSettings,
+  removePushTokenForUser,
+} = require("../utils/pushTokenRegistry");
+
+const DEFAULT_NOTIFICATION_PREFERENCES = {
+  ride_requests: true,
+  ride_accepted: true,
+  ride_started: true,
+  ride_completed: true,
+  ride_cancelled: true,
+  driver_arriving: true,
+  payment_updates: true,
+  new_ride_requests: true,
+  booking_confirmations: true,
+  rider_messages: true,
+  earnings_updates: true,
+  application_updates: true,
+  new_driver_applications: true,
+  support_tickets: true,
+  system_alerts: true,
+  user_reports: true,
+  promotional_messages: true,
+  broadcast_messages: true,
+};
+
+function getPreferenceSource(settings) {
+  if (!settings?.notification_preferences) {
+    return { ...DEFAULT_NOTIFICATION_PREFERENCES };
+  }
+
+  const raw =
+    typeof settings.notification_preferences.toObject === "function"
+      ? settings.notification_preferences.toObject()
+      : settings.notification_preferences;
+
+  return {
+    ...DEFAULT_NOTIFICATION_PREFERENCES,
+    ...(raw || {}),
+  };
+}
+
+function serializeNotificationSettings(settings) {
+  return {
+    push_notifications_enabled: Boolean(settings.push_notifications_enabled),
+    email_notifications_enabled: Boolean(settings.email_notifications_enabled),
+    notification_preferences: getPreferenceSource(settings),
+    updatedAt: settings.updatedAt,
+    createdAt: settings.createdAt,
+  };
+}
+
+async function trySendSpecificPush({
+  user_id,
+  push_token,
+  title,
+  message,
+  notificationType,
+  data,
+}) {
+  try {
+    return await sendPushToSpecificToken({
+      user_id,
+      push_token,
+      title,
+      message,
+      notificationType,
+      data,
+    });
+  } catch (error) {
+    console.error(
+      `[Push] Failed targeted send for user ${user_id}:`,
+      error?.message || error,
+    );
+    return {
+      success: false,
+      error: error?.message || "Failed to send push notification",
+    };
+  }
+}
+
+const getPushHealth = async (req, res, next) => {
+  try {
+    const { push_token, device_id } = req.query;
+
+    const settings = await getOrCreateNotificationSettings(req.user._id);
+
+    const preferences = getPreferenceSource(settings);
+    const tokens = settings.expo_push_tokens || [];
+    const matchedToken =
+      (push_token && tokens.find((entry) => entry.token === push_token)) || null;
+    const matchedDevice =
+      (device_id &&
+        tokens.find((entry) => entry.device_id && entry.device_id === device_id)) ||
+      null;
+    const currentPushTokenRegistered = push_token
+      ? tokens.some((entry) => entry.token === push_token)
+      : false;
+    const currentDeviceRegistered = device_id
+      ? tokens.some((entry) => entry.device_id === device_id)
+      : false;
+
+    const preferenceHealth = Object.entries(preferences).reduce(
+      (acc, [key, value]) => {
+        acc[key] = { enabled: Boolean(value) };
+        return acc;
+      },
+      {},
+    );
+
+    res.status(200).json({
+      success: true,
+      data: {
+        native_push_available: true,
+        push_notifications_enabled: Boolean(settings.push_notifications_enabled),
+        current_push_token_registered: currentPushTokenRegistered,
+        current_device_registered: currentDeviceRegistered,
+        registered_token_count: tokens.length,
+        linked_device_count: tokens.length,
+        last_registration_at:
+          matchedToken?.last_synced_at ||
+          matchedDevice?.last_synced_at ||
+          matchedToken?.added_at ||
+          matchedDevice?.added_at ||
+          null,
+        preference_health: preferenceHealth,
+      },
+    });
+  } catch (error) {
+    next(error);
+  }
+};
 
 /**
  * @swagger
@@ -29,7 +164,7 @@ const getNotificationSettings = async (req, res, next) => {
 
     res.status(200).json({
       success: true,
-      data: settings,
+      data: serializeNotificationSettings(settings),
     });
   } catch (error) {
     next(error);
@@ -78,18 +213,36 @@ const updateNotificationSettings = async (req, res, next) => {
       });
     }
 
-    if (push_notifications_enabled !== undefined) {
+    if (typeof push_notifications_enabled === "boolean") {
       settings.push_notifications_enabled = push_notifications_enabled;
     }
 
-    if (email_notifications_enabled !== undefined) {
+    if (typeof email_notifications_enabled === "boolean") {
       settings.email_notifications_enabled = email_notifications_enabled;
     }
 
-    if (notification_preferences) {
+    if (
+      notification_preferences &&
+      typeof notification_preferences === "object" &&
+      !Array.isArray(notification_preferences)
+    ) {
+      const currentPreferences = getPreferenceSource(settings);
+      const sanitizedPreferences = Object.entries(notification_preferences)
+        .filter(
+          ([key, value]) =>
+            Object.prototype.hasOwnProperty.call(
+              DEFAULT_NOTIFICATION_PREFERENCES,
+              key,
+            ) && typeof value === "boolean",
+        )
+        .reduce((acc, [key, value]) => {
+          acc[key] = value;
+          return acc;
+        }, {});
+
       settings.notification_preferences = {
-        ...settings.notification_preferences.toObject(),
-        ...notification_preferences,
+        ...currentPreferences,
+        ...sanitizedPreferences,
       };
     }
 
@@ -98,7 +251,7 @@ const updateNotificationSettings = async (req, res, next) => {
     res.status(200).json({
       success: true,
       message: "Notification settings updated successfully",
-      data: settings,
+      data: serializeNotificationSettings(settings),
     });
   } catch (error) {
     next(error);
@@ -152,59 +305,117 @@ const registerPushToken = async (req, res, next) => {
       });
     }
 
-    // ── CRITICAL: Remove this push token from ALL other users first ──────
-    // When User A logs out and User B logs in on the same device, the Expo
-    // push token stays identical. If we don't strip it from User A's
-    // settings, both users receive each other's push notifications.
-    await NotificationSettings.updateMany(
-      {
-        user_id: { $ne: req.user._id },
-        "expo_push_tokens.token": push_token,
-      },
-      { $pull: { expo_push_tokens: { token: push_token } } },
+    const settings = await getOrCreateNotificationSettings(req.user._id);
+    await attachPushTokenToSettings(
+      settings,
+      req.user._id,
+      push_token,
+      device_id,
+      platform,
     );
 
-    let settings = await NotificationSettings.findOne({
-      user_id: req.user._id,
-    });
-
-    if (!settings) {
-      settings = await NotificationSettings.create({
-        user_id: req.user._id,
-      });
-    }
-
-    // Remove stale tokens for the same device before adding the new one.
-    // This prevents duplicate OS notifications when Expo rotates the token
-    // (e.g. app reinstall, cache clear).
-    if (device_id) {
-      settings.expo_push_tokens = settings.expo_push_tokens.filter(
-        (t) => t.device_id !== device_id && t.token !== push_token,
-      );
-    } else {
-      const plat = platform || "android";
-      settings.expo_push_tokens = settings.expo_push_tokens.filter(
-        (t) => t.platform !== plat && t.token !== push_token,
-      );
-    }
-
-    // Add the current token
-    settings.expo_push_tokens.push({
-      token: push_token,
-      device_id: device_id || null,
-      platform: platform || "android",
-    });
-
-    // Safety cap: keep only the 3 most recent tokens per user
-    if (settings.expo_push_tokens.length > 3) {
-      settings.expo_push_tokens = settings.expo_push_tokens.slice(-3);
-    }
-
-    await settings.save();
+    console.log(
+      `[Push] Token registered for user ${req.user._id} device ${device_id || "unknown"} platform ${platform || "android"}`,
+    );
 
     res.status(200).json({
       success: true,
       message: "Push token registered successfully",
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+const syncPushToken = async (req, res, next) => {
+  try {
+    const {
+      push_token,
+      device_id,
+      platform,
+      send_login_test = false,
+      send_test_push = false,
+    } = req.body;
+
+    if (!push_token) {
+      return res.status(400).json({
+        success: false,
+        message: "push_token is required",
+      });
+    }
+
+    if (!Expo.isExpoPushToken(push_token)) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid Expo push token format",
+      });
+    }
+
+    const settings = await getOrCreateNotificationSettings(req.user._id);
+    await attachPushTokenToSettings(
+      settings,
+      req.user._id,
+      push_token,
+      device_id,
+      platform,
+    );
+
+    let pushResult = null;
+    if (send_login_test || send_test_push) {
+      const title = send_login_test ? "Login Ready" : "Push Test";
+      const message = send_login_test
+        ? "UniRide is ready on this device. Push notifications are connected."
+        : "This is a test push from your notification settings.";
+
+      pushResult = await trySendSpecificPush({
+        user_id: req.user._id,
+        push_token,
+        title,
+        message,
+        notificationType: "system",
+        data: {
+          action: send_login_test ? "login_push_ready" : "push_test",
+          route: "notifications",
+          device_id: device_id || null,
+          push_token,
+        },
+      });
+    }
+
+    const refreshedSettings = await getOrCreateNotificationSettings(req.user._id);
+    const preferences = getPreferenceSource(refreshedSettings);
+    const tokens = refreshedSettings.expo_push_tokens || [];
+    const matchedToken =
+      tokens.find((entry) => entry.token === push_token) || null;
+
+    console.log(
+      `[Push] Sync complete for user ${req.user._id} device ${device_id || "unknown"} send_login_test=${Boolean(send_login_test)} send_test_push=${Boolean(send_test_push)} result=${pushResult?.success ? "sent" : pushResult?.error || "saved-only"}`,
+    );
+
+    return res.status(200).json({
+      success: true,
+      message: "Push token synced successfully",
+      data: {
+        native_push_available: true,
+        push_notifications_enabled: Boolean(
+          refreshedSettings.push_notifications_enabled,
+        ),
+        current_push_token_registered: true,
+        current_device_registered: Boolean(
+          device_id &&
+            tokens.some(
+              (entry) => entry.device_id && entry.device_id === device_id,
+            ),
+        ),
+        registered_token_count: tokens.length,
+        last_registration_at:
+          matchedToken?.last_synced_at || matchedToken?.added_at || null,
+        preference_health: Object.entries(preferences).reduce((acc, [key, value]) => {
+          acc[key] = { enabled: Boolean(value) };
+          return acc;
+        }, {}),
+        push_result: pushResult,
+      },
     });
   } catch (error) {
     next(error);
@@ -245,10 +456,7 @@ const removePushToken = async (req, res, next) => {
       });
     }
 
-    await NotificationSettings.updateOne(
-      { user_id: req.user._id },
-      { $pull: { expo_push_tokens: { token: push_token } } },
-    );
+    await removePushTokenForUser(req.user._id, push_token, null);
 
     res.status(200).json({
       success: true,
@@ -264,4 +472,6 @@ module.exports = {
   updateNotificationSettings,
   registerPushToken,
   removePushToken,
+  getPushHealth,
+  syncPushToken,
 };

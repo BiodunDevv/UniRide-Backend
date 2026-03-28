@@ -12,6 +12,7 @@ const {
   sendPushNotification,
   sendBulkPushNotification,
 } = require("./pushNotificationService");
+const { enrichNotificationMetadata } = require("./notificationPresentation");
 
 let io; // set from server.js via setSocketIO()
 
@@ -32,6 +33,8 @@ const createAndPush = async (
   type = "system",
   metadata = {},
 ) => {
+  const normalizedMetadata = enrichNotificationMetadata(type, metadata);
+
   try {
     // 1. Persist in-app notification
     await UserNotification.create({
@@ -39,7 +42,7 @@ const createAndPush = async (
       title,
       message,
       type,
-      metadata,
+      metadata: normalizedMetadata,
     });
   } catch (err) {
     console.error("[Notify] Failed to save in-app notification:", err.message);
@@ -52,7 +55,7 @@ const createAndPush = async (
       title,
       message,
       notificationType: type,
-      data: metadata,
+      data: normalizedMetadata,
     });
   } catch (err) {
     console.error("[Notify] Failed to send push notification:", err.message);
@@ -78,15 +81,16 @@ const createBulkAndPush = async (
   type = "system",
   metadata = {},
 ) => {
+  const normalizedMetadata = enrichNotificationMetadata(type, metadata);
   let dbCreated = 0;
 
   // ── 1. Save in-app notifications (DB first) ───────────────────────────
   try {
     // Deduplication: if metadata has a dedup_key, skip users who already have it
     let idsToNotify = userIds;
-    if (metadata.dedup_key) {
+    if (normalizedMetadata.dedup_key) {
       const existing = await UserNotification.find({
-        "metadata.dedup_key": metadata.dedup_key,
+        "metadata.dedup_key": normalizedMetadata.dedup_key,
         user_id: { $in: userIds },
       })
         .select("user_id")
@@ -101,7 +105,7 @@ const createBulkAndPush = async (
         title,
         message,
         type,
-        metadata,
+        metadata: normalizedMetadata,
       }));
       const result = await UserNotification.insertMany(docs, {
         ordered: false,
@@ -122,7 +126,7 @@ const createBulkAndPush = async (
       user_ids: userIds,
       title,
       message,
-      data: metadata,
+      data: normalizedMetadata,
       notificationType: type,
     });
   } catch (err) {

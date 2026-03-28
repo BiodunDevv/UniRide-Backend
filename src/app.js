@@ -20,6 +20,71 @@ const reviewRoutes = require("./routes/reviewRoutes");
 
 const app = express();
 
+function redactValue(value, seen = new WeakSet()) {
+  if (Array.isArray(value)) {
+    return value.map((item) => redactValue(item, seen));
+  }
+
+  if (!value || typeof value !== "object") {
+    return value;
+  }
+
+  if (seen.has(value)) {
+    return "[Circular]";
+  }
+
+  seen.add(value);
+
+  const plainValue =
+    typeof value.toObject === "function"
+      ? value.toObject({
+          depopulate: true,
+          flattenMaps: true,
+          versionKey: false,
+        })
+      : value;
+
+  if (!plainValue || typeof plainValue !== "object") {
+    return plainValue;
+  }
+
+  const clone = Array.isArray(plainValue) ? [...plainValue] : { ...plainValue };
+  const sensitiveKeys = [
+    "password",
+    "token",
+    "refresh_token",
+    "authorization",
+    "pin",
+    "current_pin",
+    "new_pin",
+    "code",
+  ];
+
+  for (const key of Object.keys(clone)) {
+    if (sensitiveKeys.includes(key.toLowerCase())) {
+      clone[key] = "***";
+    } else {
+      clone[key] = redactValue(clone[key], seen);
+    }
+  }
+
+  return clone;
+}
+
+function isBootRoute(url = "") {
+  const path = url.split("?")[0];
+  return [
+    "/api/auth/login",
+    "/api/auth/me",
+    "/api/platform-settings",
+    "/api/driver/profile",
+    "/api/driver/online",
+    "/api/booking/my-bookings",
+    "/api/booking/driver-bookings",
+    "/api/rides/my-rides",
+  ].includes(path);
+}
+
 // Security middleware
 app.use(helmet());
 
@@ -37,36 +102,39 @@ app.use(
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-// Logging middleware
-app.use(morgan("dev"));
+// Logging middleware: keep terminal noise low in normal development.
+app.use(
+  morgan("dev", {
+    skip: (req, res) => res.statusCode < 400 || req.path === "/health",
+  }),
+);
 
-// Log request & response bodies for auth routes (debug helper)
-app.use("/api/auth", (req, res, next) => {
-  const startTime = Date.now();
-  const { method, originalUrl } = req;
+if (process.env.DEBUG_HTTP === "true") {
+  app.use("/api/auth", (req, res, next) => {
+    const { method, originalUrl } = req;
+    if (req.body && Object.keys(req.body).length > 0) {
+      console.log(`📥 ${method} ${originalUrl}`, JSON.stringify(redactValue(req.body)));
+    }
+    next();
+  });
 
-  // Log request
-  if (req.body && Object.keys(req.body).length > 0) {
-    const safeBody = { ...req.body };
-    if (safeBody.password) safeBody.password = "***";
-    console.log(`📥 ${method} ${originalUrl}`, JSON.stringify(safeBody));
-  }
+  app.use((req, res, next) => {
+    if (!isBootRoute(req.originalUrl)) {
+      next();
+      return;
+    }
 
-  // Capture response
-  const originalJson = res.json.bind(res);
-  res.json = (body) => {
-    const duration = Date.now() - startTime;
-    const status = res.statusCode;
-    const icon = status >= 400 ? "❌" : "✅";
     console.log(
-      `${icon} ${method} ${originalUrl} → ${status} (${duration}ms)`,
-      JSON.stringify(body),
+      `🚦 [BOOT] ${req.method} ${req.originalUrl}`,
+      JSON.stringify({
+        body: redactValue(req.body || {}),
+        user_id: req.user?.id || null,
+        role: req.user?.role || null,
+      }),
     );
-    return originalJson(body);
-  };
-
-  next();
-});
+    next();
+  });
+}
 
 // API Documentation
 app.use(

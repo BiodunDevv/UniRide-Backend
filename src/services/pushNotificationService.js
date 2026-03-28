@@ -1,5 +1,9 @@
 const { Expo } = require("expo-server-sdk");
 const NotificationSettings = require("../models/NotificationSettings");
+const {
+  deriveNotificationPresentation,
+  enrichNotificationMetadata,
+} = require("./notificationPresentation");
 
 // Create Expo SDK client.
 // EXPO_ACCESS_TOKEN is optional but recommended for production — it raises
@@ -8,6 +12,42 @@ const expo = new Expo({
   accessToken: process.env.EXPO_ACCESS_TOKEN || undefined,
   useFcmV1: true, // use FCM v1 for Android (legacy key support dropped by Google)
 });
+
+async function resolvePushTokensForUser(user_id, targetPushTokens = []) {
+  const settings = await NotificationSettings.findOne({ user_id });
+  if (!settings) {
+    return {
+      settings: null,
+      tokens: [],
+      error: "No notification settings found",
+    };
+  }
+
+  if (!settings.push_notifications_enabled) {
+    return {
+      settings,
+      tokens: [],
+      error: "Push notifications disabled",
+    };
+  }
+
+  const requestedTokens = Array.isArray(targetPushTokens)
+    ? targetPushTokens.filter(Boolean)
+    : [];
+
+  const tokens = settings.expo_push_tokens
+    .filter((t) => t.token && Expo.isExpoPushToken(t.token))
+    .map((t) => t.token)
+    .filter((token) =>
+      requestedTokens.length > 0 ? requestedTokens.includes(token) : true,
+    );
+
+  return {
+    settings,
+    tokens,
+    error: tokens.length === 0 ? "No valid Expo push tokens" : null,
+  };
+}
 
 /**
  * Send push notification to a single user via Expo Push
@@ -18,33 +58,32 @@ const sendPushNotification = async ({
   message,
   data = {},
   notificationType = "general",
+  targetPushTokens = [],
 }) => {
   try {
-    const settings = await NotificationSettings.findOne({ user_id });
+    const normalizedData = enrichNotificationMetadata(notificationType, data);
+    const derived = deriveNotificationPresentation(notificationType, normalizedData);
+    const { settings, tokens, error } = await resolvePushTokensForUser(
+      user_id,
+      targetPushTokens,
+    );
 
-    if (!settings) {
-      return { success: false, error: "No notification settings found" };
-    }
-
-    if (!settings.push_notifications_enabled) {
-      return { success: false, error: "Push notifications disabled" };
+    if (!settings) return { success: false, error };
+    if (error && error !== "No valid Expo push tokens") {
+      return { success: false, error };
     }
 
     // Check specific notification preference
     if (
-      settings.notification_preferences[notificationType] !== undefined &&
-      !settings.notification_preferences[notificationType]
+      derived.preferenceKey &&
+      settings.notification_preferences[derived.preferenceKey] !== undefined &&
+      !settings.notification_preferences[derived.preferenceKey]
     ) {
       return {
         success: false,
-        error: `${notificationType} notifications disabled`,
+        error: `${derived.preferenceKey} notifications disabled`,
       };
     }
-
-    // Get valid Expo push tokens
-    const tokens = settings.expo_push_tokens
-      .filter((t) => t.token && Expo.isExpoPushToken(t.token))
-      .map((t) => t.token);
 
     if (tokens.length === 0) {
       return { success: false, error: "No valid Expo push tokens" };
@@ -56,13 +95,38 @@ const sendPushNotification = async ({
       sound: "default",
       title,
       body: message,
+      subtitle:
+        derived.category === "broadcast"
+          ? "Campus announcement"
+          : derived.category === "ride"
+            ? "Ride update"
+            : derived.category === "booking"
+              ? "Booking update"
+              : "UniRide update",
       priority: "high", // ensure delivery on both iOS and Android
       badge: 1, // iOS badge count
-      channelId: "default", // Android channel
+      channelId:
+        derived.category === "broadcast"
+          ? "announcements"
+          : derived.category === "ride"
+            ? "rides"
+            : derived.category === "booking"
+              ? "bookings"
+              : "default",
+      categoryId:
+        derived.category === "broadcast"
+          ? "announcements"
+          : derived.category === "ride"
+            ? "rides"
+            : derived.category === "booking"
+              ? "bookings"
+              : "general",
       data: {
         type: notificationType,
+        category: derived.category,
+        preference_key: derived.preferenceKey,
         timestamp: new Date().toISOString(),
-        ...data,
+        ...normalizedData,
       },
     }));
 
@@ -225,9 +289,28 @@ const sendNotificationToRole = async ({
   }
 };
 
+const sendPushToSpecificToken = async ({
+  user_id,
+  push_token,
+  title,
+  message,
+  data = {},
+  notificationType = "general",
+}) => {
+  return sendPushNotification({
+    user_id,
+    title,
+    message,
+    data,
+    notificationType,
+    targetPushTokens: push_token ? [push_token] : [],
+  });
+};
+
 module.exports = {
   expo,
   sendPushNotification,
   sendBulkPushNotification,
   sendNotificationToRole,
+  sendPushToSpecificToken,
 };

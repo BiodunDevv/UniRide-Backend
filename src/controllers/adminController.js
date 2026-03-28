@@ -2518,6 +2518,7 @@ const sendBroadcastMessage = async (req, res, next) => {
         message,
         "broadcast",
         {
+          action: "broadcast_message",
           dedup_key: `broadcast_${broadcast._id}`,
           broadcast_id: broadcast._id.toString(),
           sent_by: req.user.name,
@@ -2537,6 +2538,7 @@ const sendBroadcastMessage = async (req, res, next) => {
         message,
         "broadcast",
         {
+          action: "broadcast_message",
           dedup_key: `broadcast_${broadcast._id}`,
           broadcast_id: broadcast._id.toString(),
           sent_by: req.user.name,

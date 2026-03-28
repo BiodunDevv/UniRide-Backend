@@ -11,8 +11,14 @@ const {
   sendPasswordResetCode,
   sendPinResetCode,
 } = require("../services/emailService");
-const { sendPushNotification } = require("../services/pushNotificationService");
+const {
+  sendPushToSpecificToken,
+} = require("../services/pushNotificationService");
 const { createAndPush } = require("../services/notificationService");
+const {
+  syncDevicePushTokenForUser,
+  removePushTokenForUser,
+} = require("../utils/pushTokenRegistry");
 const Language = require("../models/Language");
 const { translateText } = require("../utils/translator");
 
@@ -45,6 +51,25 @@ const createSystemNotification = async (
       console.error("Failed to create system notification:", err.message);
     }
   }
+};
+
+const normalizePhone = (value) => {
+  if (value === undefined) return undefined;
+  if (value === null) return null;
+  const trimmed = String(value).trim();
+  return trimmed || null;
+};
+
+const isValidPhone = (phone) => {
+  if (phone == null) return true;
+  return /^\+?[0-9()\-\s]{7,20}$/.test(phone);
+};
+
+const normalizeLoginPlatform = (platform) => {
+  if (!platform) return "web";
+  const normalized = String(platform).toLowerCase();
+  if (normalized === "android" || normalized === "ios") return "mobile";
+  return normalized;
 };
 
 /**
@@ -89,7 +114,15 @@ const generateToken = (id, device_id) => {
  */
 const register = async (req, res, next) => {
   try {
-    const { name, email, password } = req.body;
+    const { name, email, password, phone } = req.body;
+
+    const normalizedPhone = normalizePhone(phone);
+    if (!isValidPhone(normalizedPhone)) {
+      return res.status(400).json({
+        success: false,
+        message: "Please provide a valid phone number",
+      });
+    }
 
     // Only users can self-register; drivers must apply via the web portal
     const assignedRole = "user";
@@ -111,6 +144,7 @@ const register = async (req, res, next) => {
     const user = await User.create({
       name,
       email,
+      phone: normalizedPhone,
       password,
       role: assignedRole,
       email_verified: false,
@@ -156,6 +190,7 @@ const register = async (req, res, next) => {
           id: user._id,
           name: user.name,
           email: user.email,
+          phone: user.phone,
           role: user.role,
           email_verified: user.email_verified,
         },
@@ -199,7 +234,7 @@ const register = async (req, res, next) => {
  */
 const login = async (req, res, next) => {
   try {
-    const { email, password, device_id, platform } = req.body;
+    const { email, password, device_id, platform, push_token } = req.body;
 
     // Validate input
     if (!email || !password || !device_id) {
@@ -220,7 +255,7 @@ const login = async (req, res, next) => {
 
     // Platform-based role enforcement
     const userRole = user.role;
-    const loginPlatform = platform || "web";
+    const loginPlatform = normalizeLoginPlatform(platform);
 
     if (
       loginPlatform === "web" &&
@@ -354,15 +389,34 @@ const login = async (req, res, next) => {
     // Generate token with device_id
     const token = generateToken(user._id, device_id);
 
-    // Create login notification (saved to DB + push sent to any existing tokens)
+    // Save the login activity in-app. The current device receives a targeted
+    // push after post-auth push sync, so we avoid broadcasting to stale tokens.
     await createSystemNotification(
       user._id,
       "New Sign In",
       `You signed in from ${req.body.device_name || "a device"} at ${new Date().toLocaleString()}.`,
       "security",
       { action: "login", device_name: req.body.device_name || "Unknown" },
-      true,
+      false,
     );
+
+    if (push_token) {
+      const saved = await syncDevicePushTokenForUser(
+        user._id,
+        push_token,
+        device_id,
+        platform === "ios" ? "ios" : "android",
+      );
+      if (!saved) {
+        console.warn(
+          `[Push] Login received invalid Expo token for user ${user._id} device ${device_id}`,
+        );
+      }
+    } else {
+      console.warn(
+        `[Push] Login received no Expo token for user ${user._id} device ${device_id}`,
+      );
+    }
 
     res.status(200).json({
       success: true,
@@ -411,7 +465,7 @@ const login = async (req, res, next) => {
  */
 const biometricAuth = async (req, res, next) => {
   try {
-    const { user_id, device_id } = req.body;
+    const { user_id, device_id, push_token, platform } = req.body;
 
     if (!user_id || !device_id) {
       return res.status(400).json({
@@ -468,6 +522,24 @@ const biometricAuth = async (req, res, next) => {
       false,
     );
 
+    if (push_token) {
+      const saved = await syncDevicePushTokenForUser(
+        user._id,
+        push_token,
+        device_id,
+        platform === "ios" ? "ios" : "android",
+      );
+      if (!saved) {
+        console.warn(
+          `[Push] Biometric login received invalid Expo token for user ${user._id} device ${device_id}`,
+        );
+      }
+    } else {
+      console.warn(
+        `[Push] Biometric login received no Expo token for user ${user._id} device ${device_id}`,
+      );
+    }
+
     res.status(200).json({
       success: true,
       message: "Biometric authentication successful",
@@ -514,12 +586,45 @@ const logout = async (req, res, next) => {
   try {
     // Get device_id from request body or from token (set by middleware)
     const device_id = req.body.device_id || req.device_id;
+    const push_token = req.body.push_token || null;
     const user = await User.findById(req.user._id);
 
     if (!device_id) {
       return res.status(400).json({
         success: false,
         message: "device_id is required",
+      });
+    }
+
+    const matchedDevice =
+      user.devices.find((d) => d.device_id === device_id) || null;
+
+    await createSystemNotification(
+      user._id,
+      "Signed Out",
+      `You signed out from ${matchedDevice?.device_name || "this device"} at ${new Date().toLocaleString()}.`,
+      "security",
+      {
+        action: "logout",
+        device_id,
+        device_name: matchedDevice?.device_name || "Unknown Device",
+      },
+      false,
+    );
+
+    if (push_token) {
+      await sendPushToSpecificToken({
+        user_id: req.user._id,
+        push_token,
+        title: "Signed Out",
+        message: `You signed out from ${matchedDevice?.device_name || "this device"}.`,
+        notificationType: "system",
+        data: {
+          action: "logout",
+          route: "notifications",
+          device_id,
+          device_name: matchedDevice?.device_name || "Unknown Device",
+        },
       });
     }
 
@@ -532,6 +637,12 @@ const logout = async (req, res, next) => {
     }
 
     await user.save();
+
+    if (push_token) {
+      await removePushTokenForUser(req.user._id, push_token, null);
+    } else {
+      await removePushTokenForUser(req.user._id, null, device_id);
+    }
 
     res.status(200).json({
       success: true,
@@ -712,7 +823,7 @@ const getMe = async (req, res, next) => {
  * @swagger
  * /api/auth/profile:
  *   patch:
- *     summary: Update user profile (name and profile picture)
+ *     summary: Update user profile (name, phone, and profile picture)
  *     tags: [Auth]
  *     security:
  *       - bearerAuth: []
@@ -727,13 +838,15 @@ const getMe = async (req, res, next) => {
  *               profile_picture:
  *                 type: string
  *                 description: Cloudinary URL for profile picture
+ *               phone:
+ *                 type: string
  *     responses:
  *       200:
  *         description: Profile updated successfully
  */
 const updateProfile = async (req, res, next) => {
   try {
-    const { name, profile_picture } = req.body;
+    const { name, profile_picture, phone } = req.body;
 
     const user = await User.findById(req.user._id);
     if (!user) {
@@ -744,6 +857,16 @@ const updateProfile = async (req, res, next) => {
 
     if (name && name.trim()) user.name = name.trim();
     if (profile_picture !== undefined) user.profile_picture = profile_picture;
+    if (phone !== undefined) {
+      const normalizedPhone = normalizePhone(phone);
+      if (!isValidPhone(normalizedPhone)) {
+        return res.status(400).json({
+          success: false,
+          message: "Please provide a valid phone number",
+        });
+      }
+      user.phone = normalizedPhone;
+    }
 
     await user.save();
 
@@ -861,6 +984,7 @@ const verifyEmail = async (req, res, next) => {
           id: user._id,
           name: user.name,
           email: user.email,
+          phone: user.phone,
           role: user.role,
           email_verified: user.email_verified,
         },
@@ -1769,7 +1893,7 @@ const removePin = async (req, res, next) => {
  */
 const pinLogin = async (req, res, next) => {
   try {
-    const { user_id, device_id, pin } = req.body;
+    const { user_id, device_id, pin, push_token, platform } = req.body;
 
     if (!user_id || !device_id || !pin) {
       return res.status(400).json({
@@ -1829,6 +1953,24 @@ const pinLogin = async (req, res, next) => {
       { action: "pin_login", device_id },
       false,
     );
+
+    if (push_token) {
+      const saved = await syncDevicePushTokenForUser(
+        user._id,
+        push_token,
+        device_id,
+        platform === "ios" ? "ios" : "android",
+      );
+      if (!saved) {
+        console.warn(
+          `[Push] PIN login received invalid Expo token for user ${user._id} device ${device_id}`,
+        );
+      }
+    } else {
+      console.warn(
+        `[Push] PIN login received no Expo token for user ${user._id} device ${device_id}`,
+      );
+    }
 
     res.status(200).json({
       success: true,

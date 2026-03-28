@@ -7,6 +7,29 @@ const PlatformSettings = require("../models/PlatformSettings");
 const generateCheckInCode = require("../utils/generateCheckInCode");
 const notificationService = require("../services/notificationService");
 const { getIO } = require("../utils/socketManager");
+const User = require("../models/User");
+
+const ensureUserHasBookingPhone = async (userId) => {
+  const rider = await User.findById(userId).select("name phone");
+  if (!rider) {
+    return {
+      ok: false,
+      status: 404,
+      message: "User not found",
+    };
+  }
+
+  if (!rider.phone || !String(rider.phone).trim()) {
+    return {
+      ok: false,
+      status: 400,
+      message:
+        "Add your phone number in Edit Profile before requesting or booking a ride.",
+    };
+  }
+
+  return { ok: true, rider };
+};
 
 // ── Create a ride (users request, drivers schedule, admins schedule) ────────
 const createRide = async (req, res, next) => {
@@ -35,6 +58,16 @@ const createRide = async (req, res, next) => {
     }
 
     const isUser = req.user.role === "user";
+
+    if (isUser) {
+      const riderCheck = await ensureUserHasBookingPhone(req.user._id);
+      if (!riderCheck.ok) {
+        return res.status(riderCheck.status).json({
+          success: false,
+          message: riderCheck.message,
+        });
+      }
+    }
 
     // Check allow_ride_without_driver for user-created rides
     if (isUser && !settings.allow_ride_without_driver) {
@@ -398,7 +431,10 @@ const getRideDetails = async (req, res, next) => {
       .populate("destination_id")
       .populate({
         path: "driver_id",
-        populate: { path: "user_id", select: "name profile_picture email" },
+        populate: {
+          path: "user_id",
+          select: "name profile_picture email phone",
+        },
       });
 
     if (!ride)
@@ -409,7 +445,10 @@ const getRideDetails = async (req, res, next) => {
     const bookings = await Booking.find({
       ride_id: ride._id,
       status: { $in: ["pending", "accepted", "in_progress"] },
-    }).populate("user_id", "name email profile_picture");
+    }).populate(
+      "user_id",
+      "name email profile_picture phone current_location updatedAt",
+    );
 
     const obj = ride.toObject();
     obj.seats_remaining = ride.available_seats - ride.booked_seats;

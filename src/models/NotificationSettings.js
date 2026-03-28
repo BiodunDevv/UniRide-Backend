@@ -25,6 +25,10 @@ const notificationSettingsSchema = new mongoose.Schema(
           type: Date,
           default: Date.now,
         },
+        last_synced_at: {
+          type: Date,
+          default: Date.now,
+        },
       },
     ],
     push_notifications_enabled: {

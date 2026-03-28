@@ -309,6 +309,63 @@ const getDriverProfile = async (req, res, next) => {
   }
 };
 
+const getPublicDriverProfile = async (req, res, next) => {
+  try {
+    const driver = await Driver.findById(req.params.id)
+      .populate("user_id", "name profile_picture email phone createdAt")
+      .select(
+        [
+          "user_id",
+          "phone",
+          "vehicle_model",
+          "vehicle_color",
+          "vehicle_description",
+          "vehicle_image",
+          "plate_number",
+          "available_seats",
+          "rating",
+          "total_ratings",
+          "is_online",
+          "last_online_at",
+          "status",
+        ].join(" "),
+      )
+      .lean();
+
+    if (!driver) {
+      return res.status(404).json({
+        success: false,
+        message: "Driver profile not found",
+      });
+    }
+
+    res.status(200).json({
+      success: true,
+      data: {
+        _id: driver._id,
+        name: driver.user_id?.name || "Driver",
+        profile_picture: driver.user_id?.profile_picture || null,
+        email: driver.user_id?.email || null,
+        phone: driver.user_id?.phone || driver.phone || null,
+        vehicle_model: driver.vehicle_model || null,
+        vehicle_color: driver.vehicle_color || null,
+        vehicle_description: driver.vehicle_description || null,
+        vehicle_image: driver.vehicle_image || null,
+        plate_number: driver.plate_number || null,
+        available_seats: driver.available_seats ?? null,
+        rating: driver.rating ?? 0,
+        total_ratings: driver.total_ratings ?? 0,
+        is_online: Boolean(driver.is_online),
+        status: driver.status || "inactive",
+        last_online_at: driver.last_online_at || null,
+        joined_at: driver.user_id?.createdAt || null,
+      },
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
 /**
  * @swagger
  * /api/driver/profile:
@@ -1170,6 +1227,7 @@ const formatActiveRider = (booking) => {
     name: user?.name || "Passenger",
     profile_picture: user?.profile_picture || null,
     email: user?.email || null,
+    phone: user?.phone || null,
     ride_id: ride?._id,
     ride_status: ride?.status || booking.status,
     booking_status: booking.status,
@@ -1199,7 +1257,7 @@ const getActiveRiderLocations = async (req, res, next) => {
     const bookings = await Booking.find(buildActiveRiderQuery())
       .populate({
         path: "user_id",
-        select: "name profile_picture email current_location",
+        select: "name profile_picture email phone current_location",
       })
       .populate({
         path: "ride_id",
@@ -1280,6 +1338,13 @@ const updateUserLocation = async (req, res, next) => {
           updatedAt: new Date(),
         });
 
+        io.to(`ride-${booking.ride_id._id}`).emit("passenger-location-updated", {
+          user_id: riderPayload.user_id,
+          location: riderPayload.location,
+          name: riderPayload.name,
+          profile_picture: riderPayload.profile_picture,
+          timestamp: riderPayload.last_updated_at,
+        });
         io.to("live-map").emit("active-rider-location-updated", riderPayload);
       }
     }
@@ -1295,6 +1360,7 @@ module.exports = {
   checkApplicationByEmail,
   getApplicationStatus,
   getDriverProfile,
+  getPublicDriverProfile,
   updateDriverProfile,
   toggleDriverStatus,
   updateDriverLicense,
