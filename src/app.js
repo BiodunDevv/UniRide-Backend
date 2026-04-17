@@ -17,6 +17,7 @@ const settingsRoutes = require("./routes/settingsRoutes");
 const locationRoutes = require("./routes/locationRoutes");
 const platformSettingsRoutes = require("./routes/platformSettingsRoutes");
 const reviewRoutes = require("./routes/reviewRoutes");
+const accountDeletionRoutes = require("./routes/accountDeletionRoutes");
 
 const app = express();
 
@@ -174,6 +175,7 @@ app.use("/api/settings", settingsRoutes);
 app.use("/api/locations", locationRoutes);
 app.use("/api/platform-settings", platformSettingsRoutes);
 app.use("/api/reviews", reviewRoutes);
+app.use("/api/account-deletion", accountDeletionRoutes);
 
 // Welcome route
 app.get("/", (req, res) => {

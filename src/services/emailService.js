@@ -371,6 +371,68 @@ const sendPinResetCode = async (userData) => {
   }
 };
 
+const sendAccountDeletionEmail = async ({
+  type,
+  email,
+  name,
+  code,
+  intent,
+  scheduledFor,
+  note,
+}) => {
+  const titleMap = {
+    code:
+      intent === "cancel"
+        ? "Verify Account Deletion Cancellation - UniRide"
+        : "Verify Account Deletion Request - UniRide",
+    requested: "Account Deletion Request Received - UniRide",
+    approved: "Account Deletion Scheduled - UniRide",
+    rejected: "Account Deletion Request Update - UniRide",
+    cancelled: "Account Deletion Cancelled - UniRide",
+  };
+
+  const bodyMap = {
+    code: `<p>Use the verification code below to ${
+      intent === "cancel" ? "cancel your account deletion request" : "request account deletion"
+    }.</p><p style="font-size:32px;font-weight:700;letter-spacing:8px;margin:24px 0;">${code}</p><p>This code expires in 15 minutes.</p>`,
+    requested:
+      "<p>We received your UniRide account deletion request. An administrator will review it before deletion is scheduled.</p><p>You will receive another update after the request is reviewed.</p>",
+    approved: `<p>Your UniRide account deletion request was approved.</p><p>Your account is scheduled for permanent deletion on <strong>${new Date(
+      scheduledFor,
+    ).toLocaleString()}</strong>.</p><p>You can still cancel this request before that date.</p>`,
+    rejected: `<p>Your UniRide account deletion request was rejected.</p>${
+      note ? `<p><strong>Reason:</strong> ${note}</p>` : ""
+    }<p>If you need help, contact privacy@uniride.ng or support@uniride.ng.</p>`,
+    cancelled:
+      "<p>Your UniRide account deletion request has been cancelled successfully. Your account will remain active.</p>",
+  };
+
+  const htmlContent = `
+    <div style="font-family:Arial,sans-serif;background:#f5f7f9;padding:32px;color:#10212b;">
+      <div style="max-width:640px;margin:0 auto;background:#ffffff;border:1px solid #d7dee4;">
+        <div style="background:#042F40;padding:24px 28px;color:#ffffff;">
+          <div style="font-size:20px;font-weight:700;">UniRide</div>
+          <div style="margin-top:6px;font-size:13px;opacity:0.8;">Account deletion support</div>
+        </div>
+        <div style="padding:28px;">
+          <p>Hello ${name || "UniRide user"},</p>
+          ${bodyMap[type]}
+          <hr style="border:none;border-top:1px solid #e5eaee;margin:24px 0;" />
+          <p style="font-size:13px;color:#55636d;">
+            If you did not initiate this action, please contact privacy@uniride.ng or support@uniride.ng immediately.
+          </p>
+        </div>
+      </div>
+    </div>
+  `;
+
+  await sendEmail({
+    to: email,
+    subject: titleMap[type],
+    htmlContent,
+  });
+};
+
 module.exports = {
   sendEmailVerificationCode,
   sendPasswordResetCode,
@@ -383,4 +445,5 @@ module.exports = {
   sendMissedRideEmail,
   sendAdminInvitationEmail,
   sendBroadcastEmail,
+  sendAccountDeletionEmail,
 };

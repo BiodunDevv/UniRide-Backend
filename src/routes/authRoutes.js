@@ -34,6 +34,11 @@ const {
 } = require("../controllers/authController");
 const { protect } = require("../middlewares/authMiddleware");
 const { authLimiter } = require("../middlewares/rateLimit");
+const {
+  getAuthenticatedDeletionStatus,
+  submitAuthenticatedDeletionRequest,
+  cancelAuthenticatedDeletionRequest,
+} = require("../controllers/accountDeletionController");
 
 /**
  * @swagger
@@ -91,5 +96,16 @@ router.post("/devices/logout-all", protect, logoutAllDevices);
 router.get("/languages", getAvailableLanguages);
 router.patch("/language", protect, updateLanguagePreference);
 router.post("/translate", protect, translateUserText);
+router.get("/account-deletion/status", protect, getAuthenticatedDeletionStatus);
+router.post(
+  "/account-deletion/request",
+  protect,
+  submitAuthenticatedDeletionRequest,
+);
+router.post(
+  "/account-deletion/cancel",
+  protect,
+  cancelAuthenticatedDeletionRequest,
+);
 
 module.exports = router;

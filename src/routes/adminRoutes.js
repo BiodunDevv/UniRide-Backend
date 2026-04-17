@@ -36,6 +36,12 @@ const {
   updateLanguage,
   deleteLanguage,
 } = require("../controllers/adminController");
+const {
+  listDeletionRequests,
+  getDeletionRequestById,
+  approveDeletionRequestForAdmin,
+  rejectDeletionRequestForAdmin,
+} = require("../controllers/accountDeletionController");
 const { protect } = require("../middlewares/authMiddleware");
 const authorize = require("../middlewares/roleMiddleware");
 
@@ -155,6 +161,30 @@ router.patch(
   protect,
   authorize("admin", "super_admin"),
   flagUser,
+);
+router.get(
+  "/account-deletion-requests",
+  protect,
+  authorize("admin", "super_admin"),
+  listDeletionRequests,
+);
+router.get(
+  "/account-deletion-requests/:id",
+  protect,
+  authorize("admin", "super_admin"),
+  getDeletionRequestById,
+);
+router.patch(
+  "/account-deletion-requests/:id/approve",
+  protect,
+  authorize("admin", "super_admin"),
+  approveDeletionRequestForAdmin,
+);
+router.patch(
+  "/account-deletion-requests/:id/reject",
+  protect,
+  authorize("admin", "super_admin"),
+  rejectDeletionRequestForAdmin,
 );
 
 // Notifications

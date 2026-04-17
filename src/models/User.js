@@ -162,6 +162,61 @@ const userSchema = new mongoose.Schema(
       default: "en",
       trim: true,
     },
+    account_deletion_status: {
+      type: String,
+      enum: [
+        "none",
+        "pending_review",
+        "approved",
+        "rejected",
+        "scheduled",
+        "cancelled",
+        "completed",
+      ],
+      default: "none",
+    },
+    account_deletion_requested_at: {
+      type: Date,
+      default: null,
+    },
+    account_deletion_requested_via: {
+      type: String,
+      enum: ["mobile", "web_public", "admin"],
+      default: null,
+    },
+    account_deletion_reason: {
+      type: String,
+      trim: true,
+      default: "",
+      maxlength: 500,
+    },
+    account_deletion_reviewed_at: {
+      type: Date,
+      default: null,
+    },
+    account_deletion_reviewed_by: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "User",
+      default: null,
+    },
+    account_deletion_review_note: {
+      type: String,
+      trim: true,
+      default: "",
+      maxlength: 500,
+    },
+    account_deletion_scheduled_for: {
+      type: Date,
+      default: null,
+    },
+    account_deletion_cancelled_at: {
+      type: Date,
+      default: null,
+    },
+    account_deletion_completed_at: {
+      type: Date,
+      default: null,
+    },
     current_location: {
       type: {
         type: String,

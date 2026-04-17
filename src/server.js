@@ -7,6 +7,9 @@ const { setSocketIO } = require("./services/notificationService");
 const { setIO } = require("./utils/socketManager");
 const { initializeSupportSocket } = require("./socket/supportSocket");
 const { startRideScheduler } = require("./services/rideScheduler");
+const {
+  startAccountDeletionScheduler,
+} = require("./services/accountDeletionScheduler");
 const User = require("./models/User");
 
 const PORT = process.env.PORT || 5000;
@@ -183,6 +186,7 @@ const startServer = async () => {
 
     // Start ride expiry scheduler
     startRideScheduler();
+    startAccountDeletionScheduler();
 
     // Start server
     server.listen(PORT, () => {

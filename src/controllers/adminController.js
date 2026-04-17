@@ -10,6 +10,7 @@ const BroadcastMessage = require("../models/BroadcastMessage");
 const NotificationSettings = require("../models/NotificationSettings");
 const UserNotification = require("../models/UserNotification");
 const Language = require("../models/Language");
+const { purgeUserAccount } = require("../services/accountDeletionService");
 const CampusLocation = require("../models/CampusLocation");
 const {
   sendDriverApprovalEmail,
@@ -1142,36 +1143,10 @@ const deleteUser = async (req, res, next) => {
     }
 
     if (force === "true") {
-      // ── Full cascade purge — remove every trace from all collections ──
-      const userId = user._id;
-
-      // Bookings made by this user
-      await Booking.deleteMany({ user_id: userId });
-
-      // Support tickets created by this user
-      await SupportTicket.deleteMany({ user_id: userId });
-      // Remove their messages from tickets they participated in
-      await SupportTicket.updateMany(
-        { "messages.sender_id": userId },
-        { $pull: { messages: { sender_id: userId } } },
-      );
-
-      // Notifications & settings
-      await UserNotification.deleteMany({ user_id: userId });
-      await NotificationSettings.deleteMany({ user_id: userId });
-
-      // Admin notifications referencing this user
-      await AdminNotification.deleteMany({
-        reference_id: userId,
-        reference_model: "User",
+      await purgeUserAccount({
+        user,
+        deletedBy: req.user,
       });
-
-      // Driver application (in case they applied but weren't approved)
-      await DriverApplication.deleteMany({ user_id: userId });
-
-      // Remove user from ride_history references (unlikely but clean)
-      // and delete the user record
-      await User.findByIdAndDelete(userId);
 
       // Notify admins
       try {
@@ -1287,62 +1262,25 @@ const deleteDriver = async (req, res, next) => {
     }
 
     if (force === "true") {
-      // ── Full cascade purge — remove every trace from all collections ──
-      const userId = driver.user_id?._id;
-      const driverId = driver._id;
-      const driverName = driver.user_id?.name || "Unknown";
-      const driverEmail = driver.user_id?.email || "Unknown";
+      const linkedUser =
+        driver.user_id && driver.user_id._id
+          ? await User.findById(driver.user_id._id)
+          : null;
 
-      // All rides by this driver + their bookings
-      const rideIds = (
-        await Ride.find({ driver_id: driverId }).select("_id")
-      ).map((r) => r._id);
-      if (rideIds.length > 0) {
-        await Booking.deleteMany({ ride_id: { $in: rideIds } });
-        await Ride.deleteMany({ driver_id: driverId });
-      }
-
-      // Bookings made by this user (as a passenger too)
-      if (userId) {
-        await Booking.deleteMany({ user_id: userId });
-      }
-
-      // Driver applications
-      await DriverApplication.deleteMany({ email: driverEmail });
-      if (userId) {
-        await DriverApplication.deleteMany({ user_id: userId });
-      }
-
-      // Support tickets created by the driver user
-      if (userId) {
-        await SupportTicket.deleteMany({ user_id: userId });
-        await SupportTicket.updateMany(
-          { assigned_to: userId },
-          { $set: { assigned_to: null, status: "open" } },
-        );
-        await SupportTicket.updateMany(
-          { "messages.sender_id": userId },
-          { $pull: { messages: { sender_id: userId } } },
-        );
-      }
-
-      // Notifications & settings
-      if (userId) {
-        await UserNotification.deleteMany({ user_id: userId });
-        await NotificationSettings.deleteMany({ user_id: userId });
-        await AdminNotification.deleteMany({
-          reference_id: userId,
-          reference_model: "User",
+      if (!linkedUser) {
+        return res.status(404).json({
+          success: false,
+          message: "Linked driver account not found",
         });
       }
 
-      // Delete driver profile
-      await Driver.findByIdAndDelete(driverId);
+      const driverName = linkedUser.name || "Unknown";
+      const driverEmail = linkedUser.email || "Unknown";
 
-      // Delete the user account entirely
-      if (userId) {
-        await User.findByIdAndDelete(userId);
-      }
+      await purgeUserAccount({
+        user: linkedUser,
+        deletedBy: req.user,
+      });
 
       // Notify admins
       try {
@@ -1356,7 +1294,6 @@ const deleteDriver = async (req, res, next) => {
             driver_email: driverEmail,
             vehicle: driver.vehicle_model,
             plate_number: driver.plate_number,
-            rides_deleted: rideIds.length,
             deleted_by: req.user.name,
             deleted_by_id: req.user._id,
             action: "driver_hard_deleted",
