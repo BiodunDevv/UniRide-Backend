@@ -1,4 +1,5 @@
 const CampusLocation = require("../models/CampusLocation");
+const { sanitizeLatLng } = require("../utils/geo");
 
 // ── Get all locations (public, for mobile + web) ────────────────────────────
 const getLocations = async (req, res, next) => {
@@ -62,15 +63,18 @@ const createLocation = async (req, res, next) => {
       order,
     } = req.body;
 
-    if (
-      !name ||
-      !category ||
-      latitude === undefined ||
-      longitude === undefined
-    ) {
+    if (!name || !category || latitude === undefined || longitude === undefined) {
       return res.status(400).json({
         success: false,
         message: "name, category, latitude, and longitude are required",
+      });
+    }
+
+    const safeLocation = sanitizeLatLng(latitude, longitude);
+    if (!safeLocation) {
+      return res.status(400).json({
+        success: false,
+        message: "A valid latitude and longitude are required",
       });
     }
 
@@ -80,7 +84,7 @@ const createLocation = async (req, res, next) => {
       category,
       coordinates: {
         type: "Point",
-        coordinates: [longitude, latitude],
+        coordinates: [safeLocation.longitude, safeLocation.latitude],
       },
       address: address || name,
       description,
@@ -139,9 +143,16 @@ const updateLocation = async (req, res, next) => {
     if (order !== undefined) location.order = order;
 
     if (latitude !== undefined && longitude !== undefined) {
+      const safeLocation = sanitizeLatLng(latitude, longitude);
+      if (!safeLocation) {
+        return res.status(400).json({
+          success: false,
+          message: "A valid latitude and longitude are required",
+        });
+      }
       location.coordinates = {
         type: "Point",
-        coordinates: [longitude, latitude],
+        coordinates: [safeLocation.longitude, safeLocation.latitude],
       };
     }
 
@@ -182,20 +193,27 @@ const bulkCreateLocations = async (req, res, next) => {
         .json({ success: false, message: "locations array is required" });
     }
 
-    const docs = locations.map((loc) => ({
-      name: loc.name,
-      short_name: loc.short_name || loc.name,
-      category: loc.category,
-      coordinates: {
-        type: "Point",
-        coordinates: [loc.longitude, loc.latitude],
-      },
-      address: loc.address || loc.name,
-      description: loc.description,
-      icon: loc.icon || getCategoryIcon(loc.category),
-      is_popular: loc.is_popular || false,
-      order: loc.order || 0,
-    }));
+    const docs = locations.map((loc) => {
+      const safeLocation = sanitizeLatLng(loc.latitude, loc.longitude);
+      if (!safeLocation) {
+        throw new Error(`Invalid coordinates for location: ${loc.name}`);
+      }
+
+      return {
+        name: loc.name,
+        short_name: loc.short_name || loc.name,
+        category: loc.category,
+        coordinates: {
+          type: "Point",
+          coordinates: [safeLocation.longitude, safeLocation.latitude],
+        },
+        address: loc.address || loc.name,
+        description: loc.description,
+        icon: loc.icon || getCategoryIcon(loc.category),
+        is_popular: loc.is_popular || false,
+        order: loc.order || 0,
+      };
+    });
 
     const result = await CampusLocation.insertMany(docs, { ordered: false });
 

@@ -8,6 +8,7 @@ const generateCheckInCode = require("../utils/generateCheckInCode");
 const notificationService = require("../services/notificationService");
 const { getIO } = require("../utils/socketManager");
 const User = require("../models/User");
+const { sanitizeLatLng } = require("../utils/geo");
 
 const ensureUserHasBookingPhone = async (userId) => {
   const rider = await User.findById(userId).select("name phone");
@@ -429,8 +430,11 @@ const getRideDetails = async (req, res, next) => {
     const ride = await Ride.findById(req.params.id)
       .populate("pickup_location_id")
       .populate("destination_id")
+      .populate("created_by", "name profile_picture phone")
       .populate({
         path: "driver_id",
+        select:
+          "user_id vehicle_model vehicle_color plate_number rating bank_name bank_account_name bank_account_number",
         populate: {
           path: "user_id",
           select: "name profile_picture email phone",
@@ -573,7 +577,7 @@ const cancelRide = async (req, res, next) => {
 // ── Driver: Update GPS location during ride ─────────────────────────────────
 const updateDriverLocation = async (req, res, next) => {
   try {
-    const { latitude, longitude } = req.body;
+    const safeLocation = sanitizeLatLng(req.body.latitude, req.body.longitude);
     const ride = await Ride.findById(req.params.id);
     if (!ride)
       return res
@@ -591,9 +595,16 @@ const updateDriverLocation = async (req, res, next) => {
         .json({ success: false, message: "Not authorized" });
     }
 
+    if (!safeLocation) {
+      return res.status(400).json({
+        success: false,
+        message: "Valid latitude and longitude are required",
+      });
+    }
+
     ride.current_location = {
       type: "Point",
-      coordinates: [longitude, latitude],
+      coordinates: [safeLocation.longitude, safeLocation.latitude],
     };
     await ride.save();
 

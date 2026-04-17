@@ -3,6 +3,7 @@ const {
   geocode,
   reverseGeocode,
 } = require("../config/openrouteservice");
+const { sanitizeLineStringGeometry } = require("../utils/geo");
 
 /**
  * Calculate route between two points
@@ -43,6 +44,12 @@ const calculateRoute = async (pickup, destination) => {
       destinationAddress = await reverseGeocode(endCoords);
     }
 
+    const safeGeometry = sanitizeLineStringGeometry(routeData.geometry);
+
+    if (!safeGeometry) {
+      throw new Error("Route service returned invalid geometry");
+    }
+
     return {
       pickup: {
         coordinates: startCoords,
@@ -54,7 +61,7 @@ const calculateRoute = async (pickup, destination) => {
       },
       distance_meters: routeData.distance_meters,
       duration_seconds: routeData.duration_seconds,
-      route_geometry: routeData.geometry,
+      route_geometry: safeGeometry,
     };
   } catch (error) {
     console.error("Route calculation error:", error.message);

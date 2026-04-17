@@ -10,6 +10,7 @@ const { getIO } = require("../utils/socketManager");
 const {
   sendDriverApplicationReceivedEmail,
 } = require("../services/emailService");
+const { sanitizeLatLng, toNumber } = require("../utils/geo");
 
 // Nigerian bank list for validation
 const NIGERIAN_BANKS = [
@@ -921,9 +922,10 @@ const checkApplicationByEmail = async (req, res, next) => {
 // ─── Go Online ──────────────────────────────────────────────────────────────
 const goOnline = async (req, res, next) => {
   try {
-    const { latitude, longitude, heading } = req.body;
+    const safeLocation = sanitizeLatLng(req.body.latitude, req.body.longitude);
+    const heading = toNumber(req.body.heading);
 
-    if (!latitude || !longitude) {
+    if (!safeLocation) {
       return res.status(400).json({
         success: false,
         message: "Location (latitude, longitude) is required to go online",
@@ -948,13 +950,13 @@ const goOnline = async (req, res, next) => {
     driver.status = "active";
     driver.current_location = {
       type: "Point",
-      coordinates: [longitude, latitude],
+      coordinates: [safeLocation.longitude, safeLocation.latitude],
     };
     driver.last_known_location = {
       type: "Point",
-      coordinates: [longitude, latitude],
+      coordinates: [safeLocation.longitude, safeLocation.latitude],
     };
-    if (heading !== undefined) driver.heading = heading;
+    if (heading !== null) driver.heading = heading;
     driver.last_online_at = new Date();
     await driver.save();
 
@@ -974,7 +976,7 @@ const goOnline = async (req, res, next) => {
         plate_number: driver.plate_number,
         rating: driver.rating,
         available_seats: driver.available_seats,
-        location: { latitude, longitude },
+        location: safeLocation,
         heading: driver.heading,
         last_online_at: driver.last_online_at,
       });
@@ -1053,9 +1055,10 @@ const goOffline = async (req, res, next) => {
 // ─── Update Driver Live Location ────────────────────────────────────────────
 const updateDriverLiveLocation = async (req, res, next) => {
   try {
-    const { latitude, longitude, heading } = req.body;
+    const safeLocation = sanitizeLatLng(req.body.latitude, req.body.longitude);
+    const heading = toNumber(req.body.heading);
 
-    if (!latitude || !longitude) {
+    if (!safeLocation) {
       return res.status(400).json({
         success: false,
         message: "Location (latitude, longitude) is required",
@@ -1072,16 +1075,20 @@ const updateDriverLiveLocation = async (req, res, next) => {
 
     driver.current_location = {
       type: "Point",
-      coordinates: [longitude, latitude],
+      coordinates: [safeLocation.longitude, safeLocation.latitude],
     };
     driver.last_known_location = {
       type: "Point",
-      coordinates: [longitude, latitude],
+      coordinates: [safeLocation.longitude, safeLocation.latitude],
     };
-    if (heading !== undefined) driver.heading = heading;
+    if (heading !== null) driver.heading = heading;
     driver.last_online_at = new Date();
     await driver.save();
-    await persistActiveRideLocation(driver._id, longitude, latitude);
+    await persistActiveRideLocation(
+      driver._id,
+      safeLocation.longitude,
+      safeLocation.latitude,
+    );
 
     // Broadcast real-time location to all connected clients
     try {
@@ -1089,7 +1096,7 @@ const updateDriverLiveLocation = async (req, res, next) => {
       io.emit("driver-location-updated", {
         driver_id: driver._id,
         user_id: req.user._id,
-        location: { latitude, longitude },
+        location: safeLocation,
         heading: driver.heading,
         timestamp: new Date(),
       });
@@ -1292,9 +1299,9 @@ const getActiveRiderLocations = async (req, res, next) => {
 // ─── Update User Location ────────────────────────────────────────────────────
 const updateUserLocation = async (req, res, next) => {
   try {
-    const { latitude, longitude } = req.body;
+    const safeLocation = sanitizeLatLng(req.body.latitude, req.body.longitude);
 
-    if (!latitude || !longitude) {
+    if (!safeLocation) {
       return res.status(400).json({
         success: false,
         message: "Location (latitude, longitude) is required",
@@ -1304,7 +1311,7 @@ const updateUserLocation = async (req, res, next) => {
     await User.findByIdAndUpdate(req.user._id, {
       current_location: {
         type: "Point",
-        coordinates: [longitude, latitude],
+        coordinates: [safeLocation.longitude, safeLocation.latitude],
       },
     });
 

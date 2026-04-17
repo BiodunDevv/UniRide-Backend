@@ -28,6 +28,15 @@ const ensureUserHasBookingPhone = async (userId) => {
   return { ok: true, rider };
 };
 
+const shouldShowBankDetails = (booking) =>
+  booking?.payment_method === "transfer" &&
+  ["accepted", "in_progress", "completed"].includes(booking?.status);
+
+const applyBankDetailsVisibility = (booking) => {
+  booking.bank_details_visible = shouldShowBankDetails(booking);
+  return booking;
+};
+
 // ── User: Request a ride (creates pending booking) ──────────────────────────
 const requestRide = async (req, res, next) => {
   try {
@@ -111,6 +120,8 @@ const requestRide = async (req, res, next) => {
         : ride.fare || 0,
       payment_method,
       status: settings.auto_accept_bookings ? "accepted" : "pending",
+      bank_details_visible:
+        payment_method === "transfer" && settings.auto_accept_bookings,
     });
 
     // If auto-accept, immediately increment booked seats
@@ -269,6 +280,7 @@ const acceptBooking = async (req, res, next) => {
     booking.reviewed_by = req.user._id;
     booking.reviewed_at = new Date();
     if (req.body.admin_note) booking.admin_note = req.body.admin_note;
+    applyBankDetailsVisibility(booking);
     await booking.save();
 
     // Increment booked seats
@@ -360,6 +372,7 @@ const declineBooking = async (req, res, next) => {
     booking.reviewed_by = req.user._id;
     booking.reviewed_at = new Date();
     if (req.body.admin_note) booking.admin_note = req.body.admin_note;
+    applyBankDetailsVisibility(booking);
     await booking.save();
 
     // Send in-app + push notification to user
@@ -526,6 +539,7 @@ const updatePaymentStatus = async (req, res, next) => {
         .json({ success: false, message: "Booking not found" });
 
     booking.payment_status = payment_status;
+    applyBankDetailsVisibility(booking);
     await booking.save();
 
     // Emit real-time socket event so both sides update instantly
@@ -701,11 +715,17 @@ const getMyBookings = async (req, res, next) => {
           "pickup_location_id",
           "destination_id",
           {
+            path: "created_by",
+            select: "name profile_picture phone",
+          },
+          {
             path: "driver_id",
             populate: {
               path: "user_id",
               select: "name profile_picture phone",
             },
+            select:
+              "user_id vehicle_model vehicle_color plate_number rating bank_name bank_account_name bank_account_number",
           },
         ],
       })
@@ -741,6 +761,7 @@ const cancelBooking = async (req, res, next) => {
 
     const wasAccepted = booking.status === "accepted";
     booking.status = "cancelled";
+    applyBankDetailsVisibility(booking);
     await booking.save();
 
     // Confirm cancellation to the user
@@ -834,7 +855,14 @@ const getDriverBookings = async (req, res, next) => {
       .populate("user_id", "name email profile_picture phone")
       .populate({
         path: "ride_id",
-        populate: ["pickup_location_id", "destination_id"],
+        populate: [
+          "pickup_location_id",
+          "destination_id",
+          {
+            path: "created_by",
+            select: "name profile_picture phone",
+          },
+        ],
       })
       .sort({ createdAt: -1 });
 
