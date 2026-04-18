@@ -30,6 +30,15 @@ const authorize = require("../middlewares/roleMiddleware");
  *                   properties:
  *                     expo_maps_enabled:
  *                       type: boolean
+ *                     mobile_map_enabled:
+ *                       type: boolean
+ *                     mobile_map_provider:
+ *                       type: string
+ *                       enum: [native, mapbox]
+ *                     mobile_map_3d_enabled:
+ *                       type: boolean
+ *                     mobile_navigation_enabled:
+ *                       type: boolean
  *                     fare_per_seat:
  *                       type: number
  *                     maintenance_mode:
@@ -107,6 +116,15 @@ router.get(
  *             type: object
  *             properties:
  *               expo_maps_enabled:
+ *                 type: boolean
+ *               mobile_map_enabled:
+ *                 type: boolean
+ *               mobile_map_provider:
+ *                 type: string
+ *                 enum: [native, mapbox]
+ *               mobile_map_3d_enabled:
+ *                 type: boolean
+ *               mobile_navigation_enabled:
  *                 type: boolean
  *               fare_per_seat:
  *                 type: number

@@ -62,7 +62,10 @@ const sendPushNotification = async ({
 }) => {
   try {
     const normalizedData = enrichNotificationMetadata(notificationType, data);
-    const derived = deriveNotificationPresentation(notificationType, normalizedData);
+    const derived = deriveNotificationPresentation(
+      notificationType,
+      normalizedData,
+    );
     const { settings, tokens, error } = await resolvePushTokensForUser(
       user_id,
       targetPushTokens,
@@ -145,20 +148,28 @@ const sendPushNotification = async ({
 
     // Process tickets — remove invalid tokens and log errors
     const invalidTokens = [];
+    let hasCredentialIssue = false;
     tickets.forEach((ticket, i) => {
       if (ticket.status === "error") {
         console.error(
           `[Push] Ticket error for token ${tokens[i]}: ${ticket.message}`,
           ticket.details,
         );
-        if (
-          ticket.details?.error === "DeviceNotRegistered" ||
-          ticket.details?.error === "InvalidCredentials"
-        ) {
+        if (ticket.details?.error === "DeviceNotRegistered") {
           invalidTokens.push(tokens[i]);
+        }
+
+        if (ticket.details?.error === "InvalidCredentials") {
+          hasCredentialIssue = true;
         }
       }
     });
+
+    if (hasCredentialIssue) {
+      console.error(
+        "[Push] Expo reported InvalidCredentials. Verify EAS/Expo FCM credentials for Android production builds.",
+      );
+    }
 
     if (invalidTokens.length > 0) {
       await NotificationSettings.updateOne(

@@ -11,6 +11,23 @@ const platformSettingsSchema = new mongoose.Schema(
       type: Boolean,
       default: true,
     },
+    mobile_map_enabled: {
+      type: Boolean,
+      default: true,
+    },
+    mobile_map_provider: {
+      type: String,
+      enum: ["native", "mapbox"],
+      default: "native",
+    },
+    mobile_map_3d_enabled: {
+      type: Boolean,
+      default: false,
+    },
+    mobile_navigation_enabled: {
+      type: Boolean,
+      default: false,
+    },
 
     // ─── Fare Settings ──────────────────────────────────────────────
     fare_per_seat: {

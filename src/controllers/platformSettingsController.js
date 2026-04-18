@@ -1,10 +1,73 @@
 const PlatformSettings = require("../models/PlatformSettings");
 const FarePolicy = require("../models/FarePolicy");
+const { getIO } = require("../utils/socketManager");
+
+const SEMVER_PATTERN = /^\d+\.\d+\.\d+$/;
+
+function toBoolean(value) {
+  if (typeof value === "boolean") return value;
+  if (typeof value === "number") return value === 1;
+  if (typeof value === "string") {
+    const normalized = value.trim().toLowerCase();
+    if (["true", "1", "yes", "on"].includes(normalized)) return true;
+    if (["false", "0", "no", "off"].includes(normalized)) return false;
+  }
+  return Boolean(value);
+}
+
+function normalizeSettingsPayload(settingsDoc) {
+  const data = settingsDoc.toObject ? settingsDoc.toObject() : settingsDoc;
+  const mobileMapEnabled =
+    data.mobile_map_enabled ?? data.expo_maps_enabled ?? true;
+  return {
+    ...data,
+    expo_maps_enabled: Boolean(mobileMapEnabled),
+    mobile_map_enabled: Boolean(mobileMapEnabled),
+    mobile_map_provider:
+      data.mobile_map_provider === "mapbox" ? "mapbox" : "native",
+    mobile_map_3d_enabled: Boolean(data.mobile_map_3d_enabled),
+    mobile_navigation_enabled: Boolean(data.mobile_navigation_enabled),
+  };
+}
+
+function emitPlatformSettingsUpdate(settingsDoc, changedKeys = []) {
+  try {
+    const io = getIO();
+    const normalized = normalizeSettingsPayload(settingsDoc);
+
+    io.emit("platform-settings:updated", {
+      changedKeys,
+      settings: {
+        expo_maps_enabled: normalized.expo_maps_enabled,
+        mobile_map_enabled: normalized.mobile_map_enabled,
+        mobile_map_provider: normalized.mobile_map_provider,
+        mobile_map_3d_enabled: normalized.mobile_map_3d_enabled,
+        mobile_navigation_enabled: normalized.mobile_navigation_enabled,
+        fare_per_seat: normalized.fare_per_seat,
+        maintenance_mode: normalized.maintenance_mode,
+        app_version_minimum: normalized.app_version_minimum,
+        max_seats_per_booking: normalized.max_seats_per_booking,
+        allow_ride_without_driver: normalized.allow_ride_without_driver,
+        auto_accept_bookings: normalized.auto_accept_bookings,
+      },
+      timestamp: new Date().toISOString(),
+    });
+  } catch (error) {
+    console.warn(
+      "[PlatformSettings] socket broadcast skipped:",
+      error?.message || "socket unavailable",
+    );
+  }
+}
 
 // ─── Get Platform Settings (public — mobile apps poll this) ─────────────────
 const getPlatformSettings = async (req, res, next) => {
   try {
     const settings = await PlatformSettings.getSettings();
+    const mobileMapEnabled =
+      settings.mobile_map_enabled ?? settings.expo_maps_enabled;
+    const mobileMapProvider =
+      settings.mobile_map_provider === "mapbox" ? "mapbox" : "native";
 
     // Also fetch fare policy so mobile can display fare info
     let farePolicy = null;
@@ -25,7 +88,11 @@ const getPlatformSettings = async (req, res, next) => {
     res.status(200).json({
       success: true,
       data: {
-        expo_maps_enabled: settings.expo_maps_enabled,
+        expo_maps_enabled: Boolean(mobileMapEnabled),
+        mobile_map_enabled: Boolean(mobileMapEnabled),
+        mobile_map_provider: mobileMapProvider,
+        mobile_map_3d_enabled: Boolean(settings.mobile_map_3d_enabled),
+        mobile_navigation_enabled: Boolean(settings.mobile_navigation_enabled),
         fare_per_seat: settings.fare_per_seat,
         maintenance_mode: settings.maintenance_mode,
         app_version_minimum: settings.app_version_minimum,
@@ -44,7 +111,10 @@ const getPlatformSettings = async (req, res, next) => {
 const getFullPlatformSettings = async (req, res, next) => {
   try {
     const settings = await PlatformSettings.getSettings();
-    res.status(200).json({ success: true, data: settings });
+    res.status(200).json({
+      success: true,
+      data: normalizeSettingsPayload(settings),
+    });
   } catch (error) {
     next(error);
   }
@@ -55,6 +125,10 @@ const updatePlatformSettings = async (req, res, next) => {
   try {
     const allowedFields = [
       "expo_maps_enabled",
+      "mobile_map_enabled",
+      "mobile_map_provider",
+      "mobile_map_3d_enabled",
+      "mobile_navigation_enabled",
       "fare_per_seat",
       "maintenance_mode",
       "app_version_minimum",
@@ -70,6 +144,63 @@ const updatePlatformSettings = async (req, res, next) => {
       }
     }
 
+    const booleanFields = [
+      "expo_maps_enabled",
+      "mobile_map_enabled",
+      "mobile_map_3d_enabled",
+      "mobile_navigation_enabled",
+      "fare_per_seat",
+      "maintenance_mode",
+      "allow_ride_without_driver",
+      "auto_accept_bookings",
+    ];
+
+    for (const field of booleanFields) {
+      if (updates[field] !== undefined) {
+        updates[field] = toBoolean(updates[field]);
+      }
+    }
+
+    if (updates.mobile_map_provider !== undefined) {
+      updates.mobile_map_provider =
+        updates.mobile_map_provider === "mapbox" ? "mapbox" : "native";
+    }
+
+    if (updates.mobile_map_enabled !== undefined) {
+      updates.mobile_map_enabled = Boolean(updates.mobile_map_enabled);
+      updates.expo_maps_enabled = Boolean(updates.mobile_map_enabled);
+    } else if (updates.expo_maps_enabled !== undefined) {
+      updates.expo_maps_enabled = Boolean(updates.expo_maps_enabled);
+      updates.mobile_map_enabled = Boolean(updates.expo_maps_enabled);
+    }
+
+    if (updates.app_version_minimum !== undefined) {
+      const normalizedVersion = String(updates.app_version_minimum).trim();
+      if (!SEMVER_PATTERN.test(normalizedVersion)) {
+        return res.status(400).json({
+          success: false,
+          message:
+            "app_version_minimum must use semantic version format like 1.2.3",
+        });
+      }
+      updates.app_version_minimum = normalizedVersion;
+    }
+
+    if (updates.max_seats_per_booking !== undefined) {
+      const parsedSeats = Number(updates.max_seats_per_booking);
+      if (
+        !Number.isInteger(parsedSeats) ||
+        parsedSeats < 1 ||
+        parsedSeats > 10
+      ) {
+        return res.status(400).json({
+          success: false,
+          message: "max_seats_per_booking must be an integer between 1 and 10",
+        });
+      }
+      updates.max_seats_per_booking = parsedSeats;
+    }
+
     if (Object.keys(updates).length === 0) {
       return res.status(400).json({
         success: false,
@@ -78,15 +209,20 @@ const updatePlatformSettings = async (req, res, next) => {
     }
 
     updates.updated_by = req.user._id;
+    const changedKeys = Object.keys(updates).filter(
+      (key) => key !== "updated_by",
+    );
 
     const settings = await PlatformSettings.getSettings();
     Object.assign(settings, updates);
     await settings.save();
 
+    emitPlatformSettingsUpdate(settings, changedKeys);
+
     res.status(200).json({
       success: true,
       message: "Platform settings updated successfully",
-      data: settings,
+      data: normalizeSettingsPayload(settings),
     });
   } catch (error) {
     next(error);
