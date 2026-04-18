@@ -155,8 +155,23 @@ const rideSchema = new mongoose.Schema(
         default: undefined,
       },
     },
+    started_at: {
+      type: Date,
+    },
     ended_at: {
       type: Date,
+    },
+    cancelled_at: {
+      type: Date,
+    },
+    cancelled_by: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "User",
+    },
+    cancel_reason: {
+      type: String,
+      trim: true,
+      maxlength: 500,
     },
   },
   {

@@ -114,8 +114,8 @@ router.patch("/:id", protect, authorize("admin", "super_admin"), updateRide);
  * /api/rides/{id}/cancel:
  *   post:
  *     tags: [Rides]
- *     summary: Cancel a ride (Admin)
- *     description: Cancels ride and all pending/accepted bookings. Notifies affected users.
+ *     summary: Cancel a ride (Admin/Driver)
+ *     description: Cancels ride and all pending/accepted/in-progress bookings. Driver cancellations require a reason.
  *     security: [{ bearerAuth: [] }]
  *     parameters:
  *       - in: path
@@ -128,7 +128,7 @@ router.patch("/:id", protect, authorize("admin", "super_admin"), updateRide);
 router.post(
   "/:id/cancel",
   protect,
-  authorize("admin", "super_admin"),
+  authorize("admin", "super_admin", "driver"),
   cancelRide,
 );
 

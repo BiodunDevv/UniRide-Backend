@@ -59,6 +59,19 @@ const platformSettingsSchema = new mongoose.Schema(
       default: false,
     },
 
+    // ─── Support Contact Settings ───────────────────────────────────
+    support_email: {
+      type: String,
+      default: "support@uniride.ng",
+      trim: true,
+      lowercase: true,
+    },
+    support_phone: {
+      type: String,
+      default: "+234 (0) 800-UNIRIDE",
+      trim: true,
+    },
+
     // ─── Last updated by ────────────────────────────────────────────
     updated_by: {
       type: mongoose.Schema.Types.ObjectId,

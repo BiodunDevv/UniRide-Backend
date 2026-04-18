@@ -9,6 +9,7 @@ const SupportTicket = require("../models/SupportTicket");
 const BroadcastMessage = require("../models/BroadcastMessage");
 const NotificationSettings = require("../models/NotificationSettings");
 const UserNotification = require("../models/UserNotification");
+const Review = require("../models/Review");
 const Language = require("../models/Language");
 const { purgeUserAccount } = require("../services/accountDeletionService");
 const CampusLocation = require("../models/CampusLocation");
@@ -25,6 +26,71 @@ const {
   createAndPush,
   createBulkAndPush,
 } = require("../services/notificationService");
+const path = require("path");
+const { execFile } = require("child_process");
+const { promisify } = require("util");
+
+const execFileAsync = promisify(execFile);
+const USER_LOOKUP_MAX_LIMIT = 25;
+const USER_INSIGHTS_BOOKING_LIMIT = 20;
+const USER_INSIGHTS_RIDE_LIMIT = 12;
+const USER_INSIGHTS_SELF_CANCELLED_LIMIT = 20;
+const USER_INSIGHTS_DRIVER_CANCELLED_LIMIT = 20;
+const USER_INSIGHTS_CANCELLATION_LOOKBACK = 120;
+const USER_CANCELLATION_RISK_MAX_LIMIT = 60;
+const USER_CANCELLATION_RISK_EVENT_PREVIEW_MAX = 8;
+const CLEAR_USER_SCRIPT_TIMEOUT_MS = 120000;
+
+const ADMIN_SAFE_USER_SELECT =
+  "-password -pin_hash -pin_reset_code -pin_reset_expires -email_verification_code -email_verification_expires -password_reset_code -password_reset_expires";
+
+function escapeRegex(value = "") {
+  return String(value).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function toBooleanFlag(value) {
+  if (typeof value === "boolean") return value;
+  if (typeof value === "string") {
+    return ["true", "1", "yes", "on"].includes(value.toLowerCase());
+  }
+  if (typeof value === "number") return value === 1;
+  return false;
+}
+
+function isObjectIdLike(value = "") {
+  return /^[a-f\d]{24}$/i.test(String(value));
+}
+
+function normalizeScriptPayload(rawOutput = "") {
+  const trimmed = String(rawOutput || "").trim();
+  if (!trimmed) return null;
+  try {
+    return JSON.parse(trimmed);
+  } catch {
+    return null;
+  }
+}
+
+function getBookingRideId(booking) {
+  if (!booking?.ride_id) return null;
+  if (typeof booking.ride_id === "string") return booking.ride_id;
+  return booking.ride_id?._id ? String(booking.ride_id._id) : null;
+}
+
+function uniqObjectIds(values = []) {
+  const seen = new Set();
+  const ids = [];
+
+  for (const value of values) {
+    if (!value) continue;
+    const raw = String(value).trim();
+    if (!raw || seen.has(raw) || !isObjectIdLike(raw)) continue;
+    seen.add(raw);
+    ids.push(raw);
+  }
+
+  return ids;
+}
 
 /**
  * @swagger
@@ -828,6 +894,891 @@ const getUserById = async (req, res, next) => {
       success: true,
       data: user,
     });
+  } catch (error) {
+    next(error);
+  }
+};
+
+const lookupUsers = async (req, res, next) => {
+  try {
+    const rawQuery = String(req.query.query || req.query.q || "").trim();
+    const parsedLimit = Number(req.query.limit || 10);
+    const limit = Math.min(
+      Math.max(Number.isFinite(parsedLimit) ? parsedLimit : 10, 1),
+      USER_LOOKUP_MAX_LIMIT,
+    );
+
+    const filter = { role: "user" };
+
+    if (rawQuery) {
+      const safePattern = escapeRegex(rawQuery);
+      const regex = new RegExp(safePattern, "i");
+      const or = [{ name: regex }, { email: regex }, { phone: regex }];
+
+      if (isObjectIdLike(rawQuery)) {
+        or.unshift({ _id: rawQuery });
+      }
+
+      filter.$or = or;
+    }
+
+    const users = await User.find(filter)
+      .select(
+        "_id name email phone profile_picture role is_flagged email_verified biometric_enabled pin_enabled account_deletion_status createdAt updatedAt",
+      )
+      .sort({ createdAt: -1 })
+      .limit(limit)
+      .lean();
+
+    res.status(200).json({
+      success: true,
+      count: users.length,
+      data: users,
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+const getUserInsights = async (req, res, next) => {
+  try {
+    const { id } = req.params;
+    const user = await User.findById(id).select(ADMIN_SAFE_USER_SELECT).lean();
+
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: "User not found",
+      });
+    }
+
+    if (user.role !== "user") {
+      return res.status(400).json({
+        success: false,
+        message: "Insights are currently available for regular users only.",
+      });
+    }
+
+    const [
+      bookingStatusRows,
+      completedSpendRows,
+      notificationsTotal,
+      notificationsUnread,
+      supportStatusRows,
+      reviewsWritten,
+      ridesCreatedTotal,
+      ridesCreatedActive,
+      ridesJoinedDistinct,
+      recentBookings,
+      recentRides,
+      userSelfCancelledBookings,
+      recentBookingRideRefs,
+    ] = await Promise.all([
+      Booking.aggregate([
+        { $match: { user_id: user._id } },
+        { $group: { _id: "$status", count: { $sum: 1 } } },
+      ]),
+      Booking.aggregate([
+        { $match: { user_id: user._id, status: "completed" } },
+        { $group: { _id: null, total: { $sum: "$total_fare" } } },
+      ]),
+      UserNotification.countDocuments({ user_id: user._id }),
+      UserNotification.countDocuments({ user_id: user._id, is_read: false }),
+      SupportTicket.aggregate([
+        { $match: { user_id: user._id } },
+        { $group: { _id: "$status", count: { $sum: 1 } } },
+      ]),
+      Review.countDocuments({ user_id: user._id }),
+      Ride.countDocuments({ created_by: user._id }),
+      Ride.countDocuments({
+        created_by: user._id,
+        status: { $in: ["scheduled", "available", "accepted", "in_progress"] },
+      }),
+      Booking.distinct("ride_id", { user_id: user._id }),
+      Booking.find({ user_id: user._id })
+        .populate({
+          path: "ride_id",
+          select:
+            "pickup_location_id destination_id departure_time status fare distance_meters duration_seconds",
+          populate: [
+            { path: "pickup_location_id", select: "name short_name address" },
+            {
+              path: "destination_id",
+              select: "name short_name address",
+            },
+          ],
+        })
+        .sort({ createdAt: -1 })
+        .limit(USER_INSIGHTS_BOOKING_LIMIT)
+        .lean(),
+      Ride.find({ created_by: user._id })
+        .populate("pickup_location_id", "name short_name address")
+        .populate("destination_id", "name short_name address")
+        .populate({
+          path: "driver_id",
+          select:
+            "user_id phone vehicle_model vehicle_color plate_number rating is_online",
+          populate: {
+            path: "user_id",
+            select: "name phone profile_picture",
+          },
+        })
+        .sort({ createdAt: -1 })
+        .limit(USER_INSIGHTS_RIDE_LIMIT)
+        .lean(),
+      Booking.find({
+        user_id: user._id,
+        status: "cancelled",
+        $or: [
+          { reviewed_by: { $exists: false } },
+          { reviewed_by: null },
+          { reviewed_by: user._id },
+        ],
+      })
+        .populate({
+          path: "ride_id",
+          select:
+            "pickup_location_id destination_id departure_time status fare cancelled_at cancel_reason cancelled_by driver_id",
+          populate: [
+            { path: "pickup_location_id", select: "name short_name address" },
+            { path: "destination_id", select: "name short_name address" },
+            {
+              path: "cancelled_by",
+              select: "name role",
+            },
+            {
+              path: "driver_id",
+              select:
+                "user_id phone vehicle_model vehicle_color plate_number rating",
+              populate: {
+                path: "user_id",
+                select: "name phone profile_picture",
+              },
+            },
+          ],
+        })
+        .sort({ updatedAt: -1, createdAt: -1 })
+        .limit(USER_INSIGHTS_SELF_CANCELLED_LIMIT)
+        .lean(),
+      Booking.find({ user_id: user._id })
+        .select("ride_id")
+        .sort({ updatedAt: -1, createdAt: -1 })
+        .limit(USER_INSIGHTS_CANCELLATION_LOOKBACK)
+        .lean(),
+    ]);
+
+    const bookingStatusCounts = {
+      pending: 0,
+      accepted: 0,
+      declined: 0,
+      in_progress: 0,
+      completed: 0,
+      cancelled: 0,
+    };
+
+    for (const row of bookingStatusRows || []) {
+      if (!row?._id) continue;
+      bookingStatusCounts[row._id] = row.count || 0;
+    }
+
+    const supportStatusCounts = {};
+    for (const row of supportStatusRows || []) {
+      if (!row?._id) continue;
+      supportStatusCounts[row._id] = row.count || 0;
+    }
+
+    const totalSpent = Number(completedSpendRows?.[0]?.total || 0);
+    const devicesCount = Array.isArray(user.devices) ? user.devices.length : 0;
+    const activeBookings =
+      Number(bookingStatusCounts.pending || 0) +
+      Number(bookingStatusCounts.accepted || 0) +
+      Number(bookingStatusCounts.in_progress || 0);
+
+    const normalizedRecentBookings = (recentBookings || []).map((booking) => ({
+      ...booking,
+      ride_id: booking.ride_id || null,
+      ride_joined_id: getBookingRideId(booking),
+    }));
+
+    const cancellationRideIds = uniqObjectIds(
+      (recentBookingRideRefs || []).map((entry) => entry.ride_id),
+    );
+
+    const driverCancelledRideDocs = cancellationRideIds.length
+      ? await Ride.find({
+          _id: { $in: cancellationRideIds },
+          status: "cancelled",
+          cancelled_by: { $ne: null },
+        })
+          .populate("pickup_location_id", "name short_name address")
+          .populate("destination_id", "name short_name address")
+          .populate("cancelled_by", "name role")
+          .populate({
+            path: "driver_id",
+            select:
+              "user_id phone vehicle_model vehicle_color plate_number rating is_online",
+            populate: {
+              path: "user_id",
+              select: "name phone profile_picture",
+            },
+          })
+          .sort({ cancelled_at: -1, updatedAt: -1, createdAt: -1 })
+          .limit(USER_INSIGHTS_DRIVER_CANCELLED_LIMIT * 3)
+          .lean()
+      : [];
+
+    const driverCancelledRides = (driverCancelledRideDocs || [])
+      .filter((ride) => ride?.cancelled_by?.role === "driver")
+      .slice(0, USER_INSIGHTS_DRIVER_CANCELLED_LIMIT);
+
+    const getSafeTime = (value) => {
+      if (!value) return 0;
+      const parsed = new Date(value).getTime();
+      return Number.isFinite(parsed) ? parsed : 0;
+    };
+
+    const selfCancelledEvents = (userSelfCancelledBookings || []).map(
+      (booking) => {
+        const rideDoc =
+          booking.ride_id && typeof booking.ride_id === "object"
+            ? booking.ride_id
+            : null;
+        return {
+          id: `booking-${booking._id}`,
+          event_type: "user_cancelled_booking",
+          title: "User cancelled own booking",
+          occurred_at:
+            booking.updatedAt || booking.booking_time || booking.createdAt,
+          reason:
+            booking.admin_note ||
+            "The booking was cancelled by the rider before completion.",
+          actor: {
+            id: user._id,
+            name: user.name || user.email,
+            role: "user",
+          },
+          booking_id: booking._id,
+          ride_id: getBookingRideId(booking),
+          route: {
+            pickup: rideDoc?.pickup_location_id || null,
+            destination: rideDoc?.destination_id || null,
+          },
+          meta: {
+            seats_requested: booking.seats_requested || 0,
+            payment_method: booking.payment_method || null,
+            total_fare: booking.total_fare || 0,
+          },
+        };
+      },
+    );
+
+    const driverCancelledEvents = driverCancelledRides.map((ride) => ({
+      id: `ride-${ride._id}`,
+      event_type: "driver_cancelled_ride",
+      title: "Driver cancelled ride",
+      occurred_at: ride.cancelled_at || ride.updatedAt || ride.createdAt,
+      reason:
+        ride.cancel_reason ||
+        "Driver cancelled this trip without a specific reason note.",
+      actor: {
+        id: ride?.cancelled_by?._id || null,
+        name: ride?.cancelled_by?.name || "Driver",
+        role: "driver",
+      },
+      booking_id: null,
+      ride_id: ride._id,
+      route: {
+        pickup: ride.pickup_location_id || null,
+        destination: ride.destination_id || null,
+      },
+      meta: {
+        booked_seats: ride.booked_seats || 0,
+        available_seats: ride.available_seats || 0,
+        fare: ride.fare || 0,
+      },
+    }));
+
+    const cancellationTimeline = [
+      ...selfCancelledEvents,
+      ...driverCancelledEvents,
+    ].sort((a, b) => getSafeTime(b.occurred_at) - getSafeTime(a.occurred_at));
+
+    const cancellationSummary = {
+      self_cancelled_bookings: selfCancelledEvents.length,
+      driver_cancelled_rides: driverCancelledEvents.length,
+      total_events: cancellationTimeline.length,
+    };
+
+    res.status(200).json({
+      success: true,
+      data: {
+        user,
+        metrics: {
+          bookings_total:
+            Number(bookingStatusCounts.pending || 0) +
+            Number(bookingStatusCounts.accepted || 0) +
+            Number(bookingStatusCounts.declined || 0) +
+            Number(bookingStatusCounts.in_progress || 0) +
+            Number(bookingStatusCounts.completed || 0) +
+            Number(bookingStatusCounts.cancelled || 0),
+          bookings_by_status: bookingStatusCounts,
+          active_bookings: activeBookings,
+          completed_bookings: Number(bookingStatusCounts.completed || 0),
+          cancelled_bookings: Number(bookingStatusCounts.cancelled || 0),
+          total_spent: totalSpent,
+          rides_created_total: ridesCreatedTotal,
+          rides_created_active: ridesCreatedActive,
+          rides_joined_total: Array.isArray(ridesJoinedDistinct)
+            ? ridesJoinedDistinct.length
+            : 0,
+          notifications_total: notificationsTotal,
+          notifications_unread: notificationsUnread,
+          support_tickets_total:
+            Object.values(supportStatusCounts).reduce(
+              (sum, value) => sum + Number(value || 0),
+              0,
+            ) || 0,
+          support_tickets_by_status: supportStatusCounts,
+          reviews_written: reviewsWritten,
+          devices_count: devicesCount,
+          self_cancelled_bookings: cancellationSummary.self_cancelled_bookings,
+          driver_cancelled_rides: cancellationSummary.driver_cancelled_rides,
+          cancellation_events_total: cancellationSummary.total_events,
+        },
+        recent_bookings: normalizedRecentBookings,
+        recent_rides: recentRides || [],
+        user_self_cancelled_bookings: userSelfCancelledBookings || [],
+        driver_cancelled_rides: driverCancelledRides,
+        cancellation_summary: cancellationSummary,
+        cancellation_timeline: cancellationTimeline,
+      },
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+const getCancellationRiskUsers = async (req, res, next) => {
+  try {
+    const parsedLimit = Number(req.query.limit || 20);
+    const limit = Math.min(
+      Math.max(Number.isFinite(parsedLimit) ? parsedLimit : 20, 1),
+      USER_CANCELLATION_RISK_MAX_LIMIT,
+    );
+
+    const parsedEventsLimit = Number(req.query.events_limit || 4);
+    const eventsLimit = Math.min(
+      Math.max(Number.isFinite(parsedEventsLimit) ? parsedEventsLimit : 4, 1),
+      USER_CANCELLATION_RISK_EVENT_PREVIEW_MAX,
+    );
+
+    const [
+      selfCancelledMissingRows,
+      selfCancelledSelfRows,
+      driverCancelledRows,
+    ] = await Promise.all([
+      Booking.aggregate([
+        {
+          $match: {
+            status: "cancelled",
+            reviewed_by: null,
+          },
+        },
+        {
+          $group: {
+            _id: "$user_id",
+            count: { $sum: 1 },
+            latest_event_at: {
+              $max: {
+                $ifNull: ["$updatedAt", "$createdAt"],
+              },
+            },
+          },
+        },
+      ]),
+      Booking.aggregate([
+        {
+          $match: {
+            status: "cancelled",
+            reviewed_by: { $ne: null },
+          },
+        },
+        {
+          $match: {
+            $expr: {
+              $eq: ["$reviewed_by", "$user_id"],
+            },
+          },
+        },
+        {
+          $group: {
+            _id: "$user_id",
+            count: { $sum: 1 },
+            latest_event_at: {
+              $max: {
+                $ifNull: ["$updatedAt", "$createdAt"],
+              },
+            },
+          },
+        },
+      ]),
+      Booking.aggregate([
+        {
+          $lookup: {
+            from: "rides",
+            localField: "ride_id",
+            foreignField: "_id",
+            as: "ride",
+          },
+        },
+        { $unwind: "$ride" },
+        {
+          $match: {
+            "ride.status": "cancelled",
+            "ride.cancelled_by": { $ne: null },
+          },
+        },
+        {
+          $lookup: {
+            from: "users",
+            localField: "ride.cancelled_by",
+            foreignField: "_id",
+            as: "cancel_actor",
+          },
+        },
+        { $unwind: "$cancel_actor" },
+        {
+          $match: {
+            "cancel_actor.role": "driver",
+          },
+        },
+        {
+          $group: {
+            _id: "$user_id",
+            ride_ids: { $addToSet: "$ride_id" },
+            latest_event_at: {
+              $max: {
+                $ifNull: ["$ride.cancelled_at", "$ride.updatedAt"],
+              },
+            },
+          },
+        },
+        {
+          $project: {
+            ride_ids: 1,
+            driver_cancelled_rides: { $size: "$ride_ids" },
+            latest_event_at: 1,
+          },
+        },
+      ]),
+    ]);
+
+    const riskByUserId = new Map();
+
+    const upsertRiskRow = (userId) => {
+      if (!userId) return null;
+      const key = String(userId);
+      if (!riskByUserId.has(key)) {
+        riskByUserId.set(key, {
+          user_id: key,
+          self_cancelled_bookings: 0,
+          driver_cancelled_rides: 0,
+          last_event_at: null,
+          driver_ride_ids: new Set(),
+        });
+      }
+      return riskByUserId.get(key);
+    };
+
+    const mergeLatestEvent = (currentValue, nextValue) => {
+      const currentMs = currentValue ? new Date(currentValue).getTime() : 0;
+      const nextMs = nextValue ? new Date(nextValue).getTime() : 0;
+      return nextMs > currentMs ? nextValue : currentValue;
+    };
+
+    for (const row of selfCancelledMissingRows || []) {
+      const riskRow = upsertRiskRow(row?._id);
+      if (!riskRow) continue;
+      riskRow.self_cancelled_bookings += Number(row?.count || 0);
+      riskRow.last_event_at = mergeLatestEvent(
+        riskRow.last_event_at,
+        row?.latest_event_at,
+      );
+    }
+
+    for (const row of selfCancelledSelfRows || []) {
+      const riskRow = upsertRiskRow(row?._id);
+      if (!riskRow) continue;
+      riskRow.self_cancelled_bookings += Number(row?.count || 0);
+      riskRow.last_event_at = mergeLatestEvent(
+        riskRow.last_event_at,
+        row?.latest_event_at,
+      );
+    }
+
+    for (const row of driverCancelledRows || []) {
+      const riskRow = upsertRiskRow(row?._id);
+      if (!riskRow) continue;
+      riskRow.driver_cancelled_rides = Number(row?.driver_cancelled_rides || 0);
+      for (const rideId of row?.ride_ids || []) {
+        if (rideId) riskRow.driver_ride_ids.add(String(rideId));
+      }
+      riskRow.last_event_at = mergeLatestEvent(
+        riskRow.last_event_at,
+        row?.latest_event_at,
+      );
+    }
+
+    const riskRows = Array.from(riskByUserId.values())
+      .map((row) => {
+        const selfWeight = row.self_cancelled_bookings * 3;
+        const driverWeight = row.driver_cancelled_rides * 1.5;
+        const riskScore = Number((selfWeight + driverWeight).toFixed(2));
+
+        const riskBand =
+          row.self_cancelled_bookings >= 4 || riskScore >= 12
+            ? "high"
+            : row.self_cancelled_bookings >= 2 || riskScore >= 6
+              ? "medium"
+              : "low";
+
+        return {
+          ...row,
+          total_events:
+            Number(row.self_cancelled_bookings || 0) +
+            Number(row.driver_cancelled_rides || 0),
+          risk_score: riskScore,
+          risk_band: riskBand,
+        };
+      })
+      .filter((row) => row.total_events > 0)
+      .sort((a, b) => {
+        if (b.risk_score !== a.risk_score) return b.risk_score - a.risk_score;
+        const aMs = a.last_event_at ? new Date(a.last_event_at).getTime() : 0;
+        const bMs = b.last_event_at ? new Date(b.last_event_at).getTime() : 0;
+        return bMs - aMs;
+      })
+      .slice(0, limit);
+
+    const topUserIds = uniqObjectIds(riskRows.map((row) => row.user_id));
+    if (topUserIds.length === 0) {
+      return res.status(200).json({
+        success: true,
+        count: 0,
+        data: [],
+      });
+    }
+
+    const users = await User.find({
+      _id: { $in: topUserIds },
+      role: "user",
+    })
+      .select("_id name email phone profile_picture is_flagged createdAt")
+      .lean();
+
+    const userById = new Map(users.map((user) => [String(user._id), user]));
+
+    const ridePopulate = {
+      path: "ride_id",
+      select:
+        "pickup_location_id destination_id cancel_reason cancelled_at status fare booked_seats available_seats cancelled_by createdAt updatedAt",
+      populate: [
+        { path: "pickup_location_id", select: "name short_name address" },
+        { path: "destination_id", select: "name short_name address" },
+        { path: "cancelled_by", select: "name role" },
+      ],
+    };
+
+    const [selfCancelNullEvents, selfCancelSelfEventsRaw] = await Promise.all([
+      Booking.find({
+        user_id: { $in: topUserIds },
+        status: "cancelled",
+        reviewed_by: null,
+      })
+        .select(
+          "_id user_id ride_id seats_requested payment_method total_fare admin_note booking_time createdAt updatedAt",
+        )
+        .populate(ridePopulate)
+        .sort({ updatedAt: -1, createdAt: -1 })
+        .limit(limit * (eventsLimit + 4))
+        .lean(),
+      Booking.aggregate([
+        {
+          $match: {
+            user_id: { $in: topUserIds },
+            status: "cancelled",
+            reviewed_by: { $ne: null },
+          },
+        },
+        {
+          $match: {
+            $expr: {
+              $eq: ["$reviewed_by", "$user_id"],
+            },
+          },
+        },
+        {
+          $sort: { updatedAt: -1, createdAt: -1 },
+        },
+        {
+          $limit: limit * (eventsLimit + 4),
+        },
+        {
+          $project: {
+            _id: 1,
+            user_id: 1,
+            ride_id: 1,
+            seats_requested: 1,
+            payment_method: 1,
+            total_fare: 1,
+            admin_note: 1,
+            booking_time: 1,
+            createdAt: 1,
+            updatedAt: 1,
+          },
+        },
+      ]),
+    ]);
+
+    const selfCancelSelfEvents = await Booking.populate(
+      selfCancelSelfEventsRaw,
+      ridePopulate,
+    );
+
+    const allSelfCancelEvents = [
+      ...(selfCancelNullEvents || []),
+      ...(selfCancelSelfEvents || []),
+    ];
+
+    const allDriverRideIds = uniqObjectIds(
+      riskRows.flatMap((row) => Array.from(row.driver_ride_ids || [])),
+    );
+
+    const driverRideDocs = allDriverRideIds.length
+      ? await Ride.find({
+          _id: { $in: allDriverRideIds },
+          status: "cancelled",
+          cancelled_by: { $ne: null },
+        })
+          .select(
+            "_id pickup_location_id destination_id cancel_reason cancelled_at cancelled_by fare booked_seats available_seats createdAt updatedAt",
+          )
+          .populate("pickup_location_id", "name short_name address")
+          .populate("destination_id", "name short_name address")
+          .populate("cancelled_by", "name role")
+          .lean()
+      : [];
+
+    const driverRideById = new Map(
+      (driverRideDocs || []).map((ride) => [String(ride._id), ride]),
+    );
+
+    const eventsByUserId = new Map(topUserIds.map((id) => [id, []]));
+
+    for (const booking of allSelfCancelEvents) {
+      const userId = booking?.user_id ? String(booking.user_id) : null;
+      if (!userId || !eventsByUserId.has(userId)) continue;
+      const rideDoc =
+        booking?.ride_id && typeof booking.ride_id === "object"
+          ? booking.ride_id
+          : null;
+
+      eventsByUserId.get(userId).push({
+        id: `booking-${booking._id}`,
+        event_type: "user_cancelled_booking",
+        title: "User cancelled own booking",
+        occurred_at:
+          booking.updatedAt || booking.booking_time || booking.createdAt,
+        reason:
+          booking.admin_note ||
+          "The rider cancelled this booking before completion.",
+        actor: {
+          id: userId,
+          name: userById.get(userId)?.name || "User",
+          role: "user",
+        },
+        booking_id: String(booking._id),
+        ride_id: getBookingRideId(booking),
+        route: {
+          pickup: rideDoc?.pickup_location_id || null,
+          destination: rideDoc?.destination_id || null,
+        },
+        meta: {
+          seats_requested: booking.seats_requested || 0,
+          payment_method: booking.payment_method || null,
+          total_fare: booking.total_fare || 0,
+        },
+      });
+    }
+
+    for (const row of riskRows) {
+      const userId = String(row.user_id);
+      if (!eventsByUserId.has(userId)) continue;
+      const userEvents = eventsByUserId.get(userId);
+
+      for (const rideId of row.driver_ride_ids || []) {
+        const ride = driverRideById.get(String(rideId));
+        if (!ride || ride?.cancelled_by?.role !== "driver") continue;
+
+        userEvents.push({
+          id: `ride-${ride._id}`,
+          event_type: "driver_cancelled_ride",
+          title: "Driver cancelled ride",
+          occurred_at: ride.cancelled_at || ride.updatedAt || ride.createdAt,
+          reason:
+            ride.cancel_reason ||
+            "Driver cancelled this ride without a detailed reason.",
+          actor: {
+            id: ride?.cancelled_by?._id || null,
+            name: ride?.cancelled_by?.name || "Driver",
+            role: "driver",
+          },
+          booking_id: null,
+          ride_id: String(ride._id),
+          route: {
+            pickup: ride.pickup_location_id || null,
+            destination: ride.destination_id || null,
+          },
+          meta: {
+            booked_seats: ride.booked_seats || 0,
+            available_seats: ride.available_seats || 0,
+            fare: ride.fare || 0,
+          },
+        });
+      }
+    }
+
+    const responseData = [];
+
+    for (const row of riskRows) {
+      const userId = String(row.user_id);
+      const userDoc = userById.get(userId);
+      if (!userDoc) continue;
+
+      const events = (eventsByUserId.get(userId) || []).sort((a, b) => {
+        const aMs = a?.occurred_at ? new Date(a.occurred_at).getTime() : 0;
+        const bMs = b?.occurred_at ? new Date(b.occurred_at).getTime() : 0;
+        return bMs - aMs;
+      });
+
+      const driverReasonsCount = {};
+      for (const event of events) {
+        if (event.event_type !== "driver_cancelled_ride") continue;
+        const reason = String(event.reason || "No reason provided").trim();
+        driverReasonsCount[reason] = (driverReasonsCount[reason] || 0) + 1;
+      }
+
+      const topDriverCancelReasons = Object.entries(driverReasonsCount)
+        .map(([reason, count]) => ({ reason, count }))
+        .sort((a, b) => b.count - a.count)
+        .slice(0, 3);
+
+      responseData.push({
+        user: userDoc,
+        risk_score: row.risk_score,
+        risk_band: row.risk_band,
+        last_event_at: row.last_event_at,
+        metrics: {
+          self_cancelled_bookings: row.self_cancelled_bookings,
+          driver_cancelled_rides: row.driver_cancelled_rides,
+          total_events: row.total_events,
+        },
+        top_driver_cancel_reasons: topDriverCancelReasons,
+        recent_timeline: events.slice(0, eventsLimit),
+      });
+    }
+
+    res.status(200).json({
+      success: true,
+      count: responseData.length,
+      data: responseData,
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+const clearUserDataByScript = async (req, res, next) => {
+  try {
+    const { id } = req.params;
+    const dryRun = toBooleanFlag(req.body?.dry_run);
+
+    const user = await User.findById(id).select("_id name email role");
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: "User not found",
+      });
+    }
+
+    if (user.role !== "user") {
+      return res.status(400).json({
+        success: false,
+        message:
+          "This clear-data workflow is currently enabled for regular users only.",
+      });
+    }
+
+    const backendRoot = path.resolve(__dirname, "..", "..");
+    const scriptPath = path.resolve(
+      __dirname,
+      "..",
+      "scripts",
+      "clearUserData.js",
+    );
+
+    const args = [scriptPath, user.email, "--json"];
+    if (dryRun) args.push("--dry-run");
+
+    const commandPreview = `node src/scripts/clearUserData.js ${user.email}${dryRun ? " --dry-run" : ""}`;
+
+    try {
+      const { stdout, stderr } = await execFileAsync("node", args, {
+        cwd: backendRoot,
+        env: process.env,
+        timeout: CLEAR_USER_SCRIPT_TIMEOUT_MS,
+        maxBuffer: 5 * 1024 * 1024,
+      });
+
+      const parsedPayload = normalizeScriptPayload(stdout);
+
+      if (parsedPayload?.success === false) {
+        return res.status(400).json({
+          success: false,
+          message: parsedPayload.message || "Failed to clear user data",
+          command: commandPreview,
+          output: parsedPayload,
+        });
+      }
+
+      return res.status(200).json({
+        success: true,
+        message: dryRun
+          ? "User clear-data preview generated"
+          : "User data cleared successfully",
+        command: commandPreview,
+        data: parsedPayload?.summary || null,
+        output: parsedPayload || {
+          stdout: String(stdout || "").trim(),
+          stderr: String(stderr || "").trim(),
+        },
+      });
+    } catch (scriptError) {
+      const stdout = String(scriptError?.stdout || "").trim();
+      const stderr = String(scriptError?.stderr || "").trim();
+      const parsedPayload =
+        normalizeScriptPayload(stdout) || normalizeScriptPayload(stderr);
+
+      return res.status(500).json({
+        success: false,
+        message:
+          parsedPayload?.message ||
+          scriptError.message ||
+          "Failed to run clear-user-data script",
+        command: commandPreview,
+        output: parsedPayload || { stdout, stderr },
+      });
+    }
   } catch (error) {
     next(error);
   }
@@ -3084,7 +4035,11 @@ module.exports = {
   getDriverById,
   deleteDriver,
   getAllUsers,
+  lookupUsers,
+  getCancellationRiskUsers,
   getUserById,
+  getUserInsights,
+  clearUserDataByScript,
   deleteUser,
   getFarePolicy,
   updateFarePolicy,

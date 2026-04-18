@@ -1,6 +1,19 @@
 const fs = require("fs").promises;
 const path = require("path");
 const { sendEmail } = require("../config/brevo");
+const PlatformSettings = require("../models/PlatformSettings");
+
+const DEFAULT_SUPPORT_EMAIL = "support@uniride.ng";
+const DEFAULT_SUPPORT_PHONE = "+234 (0) 800-UNIRIDE";
+const SUPPORT_CACHE_TTL_MS = 60 * 1000;
+
+let supportContactCache = {
+  expiresAt: 0,
+  value: {
+    supportEmail: DEFAULT_SUPPORT_EMAIL,
+    supportPhone: DEFAULT_SUPPORT_PHONE,
+  },
+};
 
 /**
  * Replace template variables with actual values
@@ -28,6 +41,89 @@ const processTemplate = (template, variables) => {
   return processed;
 };
 
+const escapeHtml = (value) =>
+  String(value ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/\"/g, "&quot;")
+    .replace(/'/g, "&#039;");
+
+const normalizePhoneForTel = (value) => {
+  const raw = String(value || "").trim();
+  if (!raw) return "";
+
+  const hasPlusPrefix = raw.startsWith("+");
+  const digitsOnly = raw.replace(/\D/g, "");
+  if (!digitsOnly) return "";
+
+  return `${hasPlusPrefix ? "+" : ""}${digitsOnly}`;
+};
+
+const getSupportContactConfig = async () => {
+  const now = Date.now();
+  if (supportContactCache.expiresAt > now) {
+    return supportContactCache.value;
+  }
+
+  try {
+    const settings = await PlatformSettings.getSettings();
+    const supportEmail =
+      String(settings?.support_email || DEFAULT_SUPPORT_EMAIL).trim() ||
+      DEFAULT_SUPPORT_EMAIL;
+    const supportPhone =
+      String(settings?.support_phone || DEFAULT_SUPPORT_PHONE).trim() ||
+      DEFAULT_SUPPORT_PHONE;
+
+    supportContactCache = {
+      expiresAt: now + SUPPORT_CACHE_TTL_MS,
+      value: { supportEmail, supportPhone },
+    };
+  } catch (error) {
+    supportContactCache = {
+      expiresAt: now + SUPPORT_CACHE_TTL_MS,
+      value: {
+        supportEmail: DEFAULT_SUPPORT_EMAIL,
+        supportPhone: DEFAULT_SUPPORT_PHONE,
+      },
+    };
+  }
+
+  return supportContactCache.value;
+};
+
+const injectSupportFooter = async (htmlContent) => {
+  const { supportEmail, supportPhone } = await getSupportContactConfig();
+  const safeEmail = escapeHtml(supportEmail);
+  const safePhone = escapeHtml(supportPhone);
+  const telPhone = normalizePhoneForTel(supportPhone);
+
+  const footerBlock = `
+    <div style="margin-top:18px;padding-top:14px;border-top:1px solid #e5eaee;font-size:12px;line-height:1.6;color:#5b6872;">
+      Need help? Reach us at <a href="mailto:${safeEmail}" style="color:#042F40;text-decoration:none;">${safeEmail}</a>
+      ${telPhone ? ` or <a href="tel:${telPhone}" style="color:#042F40;text-decoration:none;">${safePhone}</a>` : ""}.
+    </div>
+  `;
+
+  if (typeof htmlContent !== "string") {
+    return footerBlock;
+  }
+
+  if (/<\/body>/i.test(htmlContent)) {
+    return htmlContent.replace(/<\/body>/i, `${footerBlock}</body>`);
+  }
+
+  return `${htmlContent}${footerBlock}`;
+};
+
+const sendEmailWithSupport = async (payload) => {
+  const htmlContent = await injectSupportFooter(payload.htmlContent || "");
+  return sendEmail({
+    ...payload,
+    htmlContent,
+  });
+};
+
 /**
  * Send email verification code
  */
@@ -45,7 +141,7 @@ const sendEmailVerificationCode = async (userData) => {
       currentYear: new Date().getFullYear(),
     });
 
-    await sendEmail({
+    await sendEmailWithSupport({
       to: userData.email,
       subject: "Verify Your Email - UniRide",
       htmlContent,
@@ -70,7 +166,7 @@ const sendPasswordResetCode = async (userData) => {
       currentYear: new Date().getFullYear(),
     });
 
-    await sendEmail({
+    await sendEmailWithSupport({
       to: userData.email,
       subject: "Password Reset Request - UniRide",
       htmlContent,
@@ -98,7 +194,7 @@ const sendDriverApplicationReceivedEmail = async (driverData) => {
       currentYear: new Date().getFullYear(),
     });
 
-    await sendEmail({
+    await sendEmailWithSupport({
       to: driverData.email,
       subject: "Driver Application Received - UniRide",
       htmlContent,
@@ -128,7 +224,7 @@ const sendDriverApprovalEmail = async (driverData) => {
       currentYear: new Date().getFullYear(),
     });
 
-    await sendEmail({
+    await sendEmailWithSupport({
       to: driverData.email,
       subject: "Driver Application Approved - Welcome to UniRide!",
       htmlContent,
@@ -153,7 +249,7 @@ const sendDriverRejectionEmail = async (driverData) => {
       currentYear: new Date().getFullYear(),
     });
 
-    await sendEmail({
+    await sendEmailWithSupport({
       to: driverData.email,
       subject: "Driver Application Status Update - UniRide",
       htmlContent,
@@ -191,7 +287,7 @@ const sendRideConfirmationEmail = async (bookingData) => {
       currentYear: new Date().getFullYear(),
     });
 
-    await sendEmail({
+    await sendEmailWithSupport({
       to: bookingData.userEmail,
       subject: "Ride Booking Confirmation - UniRide",
       htmlContent,
@@ -225,7 +321,7 @@ const sendRideCompletionEmail = async (rideData) => {
       currentYear: new Date().getFullYear(),
     });
 
-    await sendEmail({
+    await sendEmailWithSupport({
       to: rideData.userEmail,
       subject: "Ride Completed - Thank You for Riding with UniRide!",
       htmlContent,
@@ -253,7 +349,7 @@ const sendMissedRideEmail = async (rideData) => {
       currentYear: new Date().getFullYear(),
     });
 
-    await sendEmail({
+    await sendEmailWithSupport({
       to: rideData.userEmail,
       subject: "Missed Ride Notification - UniRide",
       htmlContent,
@@ -280,7 +376,7 @@ const sendAdminInvitationEmail = async (adminData) => {
       currentYear: new Date().getFullYear(),
     });
 
-    await sendEmail({
+    await sendEmailWithSupport({
       to: adminData.email,
       subject: "Welcome to UniRide Admin Team - Admin Invitation",
       htmlContent,
@@ -327,7 +423,7 @@ const sendBroadcastEmail = async (userData) => {
       currentYear: new Date().getFullYear(),
     });
 
-    await sendEmail({
+    await sendEmailWithSupport({
       to: userData.email,
       subject: `📢 ${userData.title} - UniRide`,
       htmlContent,
@@ -360,7 +456,7 @@ const sendPinResetCode = async (userData) => {
       currentYear: new Date().getFullYear(),
     });
 
-    await sendEmail({
+    await sendEmailWithSupport({
       to: userData.email,
       subject: userData.subject || "Reset Your PIN - UniRide",
       htmlContent,
@@ -380,6 +476,9 @@ const sendAccountDeletionEmail = async ({
   scheduledFor,
   note,
 }) => {
+  const { supportEmail } = await getSupportContactConfig();
+  const safeSupportEmail = escapeHtml(supportEmail || DEFAULT_SUPPORT_EMAIL);
+
   const titleMap = {
     code:
       intent === "cancel"
@@ -393,7 +492,9 @@ const sendAccountDeletionEmail = async ({
 
   const bodyMap = {
     code: `<p>Use the verification code below to ${
-      intent === "cancel" ? "cancel your account deletion request" : "request account deletion"
+      intent === "cancel"
+        ? "cancel your account deletion request"
+        : "request account deletion"
     }.</p><p style="font-size:32px;font-weight:700;letter-spacing:8px;margin:24px 0;">${code}</p><p>This code expires in 15 minutes.</p>`,
     requested:
       "<p>We received your UniRide account deletion request. An administrator will review it before deletion is scheduled.</p><p>You will receive another update after the request is reviewed.</p>",
@@ -402,7 +503,7 @@ const sendAccountDeletionEmail = async ({
     ).toLocaleString()}</strong>.</p><p>You can still cancel this request before that date.</p>`,
     rejected: `<p>Your UniRide account deletion request was rejected.</p>${
       note ? `<p><strong>Reason:</strong> ${note}</p>` : ""
-    }<p>If you need help, contact privacy@uniride.ng or support@uniride.ng.</p>`,
+    }<p>If you need help, contact privacy@uniride.ng or ${safeSupportEmail}.</p>`,
     cancelled:
       "<p>Your UniRide account deletion request has been cancelled successfully. Your account will remain active.</p>",
   };
@@ -419,14 +520,14 @@ const sendAccountDeletionEmail = async ({
           ${bodyMap[type]}
           <hr style="border:none;border-top:1px solid #e5eaee;margin:24px 0;" />
           <p style="font-size:13px;color:#55636d;">
-            If you did not initiate this action, please contact privacy@uniride.ng or support@uniride.ng immediately.
+            If you did not initiate this action, please contact privacy@uniride.ng or ${safeSupportEmail} immediately.
           </p>
         </div>
       </div>
     </div>
   `;
 
-  await sendEmail({
+  await sendEmailWithSupport({
     to: email,
     subject: titleMap[type],
     htmlContent,

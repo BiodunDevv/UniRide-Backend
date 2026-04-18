@@ -51,6 +51,10 @@ const authorize = require("../middlewares/roleMiddleware");
  *                       type: boolean
  *                     auto_accept_bookings:
  *                       type: boolean
+ *                     support_email:
+ *                       type: string
+ *                     support_phone:
+ *                       type: string
  *                     fare_policy:
  *                       type: object
  *                       nullable: true
@@ -138,6 +142,10 @@ router.get(
  *                 type: boolean
  *               auto_accept_bookings:
  *                 type: boolean
+ *               support_email:
+ *                 type: string
+ *               support_phone:
+ *                 type: string
  *     responses:
  *       200:
  *         description: Settings updated

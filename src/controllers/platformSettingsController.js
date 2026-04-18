@@ -3,6 +3,9 @@ const FarePolicy = require("../models/FarePolicy");
 const { getIO } = require("../utils/socketManager");
 
 const SEMVER_PATTERN = /^\d+\.\d+\.\d+$/;
+const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const DEFAULT_SUPPORT_EMAIL = "support@uniride.ng";
+const DEFAULT_SUPPORT_PHONE = "+234 (0) 800-UNIRIDE";
 
 function toBoolean(value) {
   if (typeof value === "boolean") return value;
@@ -19,6 +22,13 @@ function normalizeSettingsPayload(settingsDoc) {
   const data = settingsDoc.toObject ? settingsDoc.toObject() : settingsDoc;
   const mobileMapEnabled =
     data.mobile_map_enabled ?? data.expo_maps_enabled ?? true;
+  const supportEmail = String(
+    data.support_email || DEFAULT_SUPPORT_EMAIL,
+  ).trim();
+  const supportPhone = String(
+    data.support_phone || DEFAULT_SUPPORT_PHONE,
+  ).trim();
+
   return {
     ...data,
     expo_maps_enabled: Boolean(mobileMapEnabled),
@@ -27,6 +37,8 @@ function normalizeSettingsPayload(settingsDoc) {
       data.mobile_map_provider === "mapbox" ? "mapbox" : "native",
     mobile_map_3d_enabled: Boolean(data.mobile_map_3d_enabled),
     mobile_navigation_enabled: Boolean(data.mobile_navigation_enabled),
+    support_email: supportEmail || DEFAULT_SUPPORT_EMAIL,
+    support_phone: supportPhone || DEFAULT_SUPPORT_PHONE,
   };
 }
 
@@ -49,6 +61,8 @@ function emitPlatformSettingsUpdate(settingsDoc, changedKeys = []) {
         max_seats_per_booking: normalized.max_seats_per_booking,
         allow_ride_without_driver: normalized.allow_ride_without_driver,
         auto_accept_bookings: normalized.auto_accept_bookings,
+        support_email: normalized.support_email,
+        support_phone: normalized.support_phone,
       },
       timestamp: new Date().toISOString(),
     });
@@ -99,6 +113,12 @@ const getPlatformSettings = async (req, res, next) => {
         max_seats_per_booking: settings.max_seats_per_booking,
         allow_ride_without_driver: settings.allow_ride_without_driver,
         auto_accept_bookings: settings.auto_accept_bookings,
+        support_email:
+          String(settings.support_email || DEFAULT_SUPPORT_EMAIL).trim() ||
+          DEFAULT_SUPPORT_EMAIL,
+        support_phone:
+          String(settings.support_phone || DEFAULT_SUPPORT_PHONE).trim() ||
+          DEFAULT_SUPPORT_PHONE,
         fare_policy: farePolicy,
       },
     });
@@ -135,6 +155,8 @@ const updatePlatformSettings = async (req, res, next) => {
       "max_seats_per_booking",
       "allow_ride_without_driver",
       "auto_accept_bookings",
+      "support_email",
+      "support_phone",
     ];
 
     const updates = {};
@@ -199,6 +221,30 @@ const updatePlatformSettings = async (req, res, next) => {
         });
       }
       updates.max_seats_per_booking = parsedSeats;
+    }
+
+    if (updates.support_email !== undefined) {
+      const normalizedEmail = String(updates.support_email)
+        .trim()
+        .toLowerCase();
+      if (!EMAIL_PATTERN.test(normalizedEmail)) {
+        return res.status(400).json({
+          success: false,
+          message: "support_email must be a valid email address",
+        });
+      }
+      updates.support_email = normalizedEmail;
+    }
+
+    if (updates.support_phone !== undefined) {
+      const normalizedPhone = String(updates.support_phone).trim();
+      if (!normalizedPhone) {
+        return res.status(400).json({
+          success: false,
+          message: "support_phone cannot be empty",
+        });
+      }
+      updates.support_phone = normalizedPhone;
     }
 
     if (Object.keys(updates).length === 0) {

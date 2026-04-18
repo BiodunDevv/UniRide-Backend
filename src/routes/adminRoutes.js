@@ -14,7 +14,11 @@ const {
   getDriverById,
   deleteDriver,
   getAllUsers,
+  lookupUsers,
+  getCancellationRiskUsers,
   getUserById,
+  getUserInsights,
+  clearUserDataByScript,
   deleteUser,
   getFarePolicy,
   updateFarePolicy,
@@ -145,10 +149,34 @@ router.patch(
 // User management
 router.get("/users", protect, authorize("admin", "super_admin"), getAllUsers);
 router.get(
+  "/users/lookup",
+  protect,
+  authorize("admin", "super_admin"),
+  lookupUsers,
+);
+router.get(
+  "/users/cancellation-risk",
+  protect,
+  authorize("admin", "super_admin"),
+  getCancellationRiskUsers,
+);
+router.get(
   "/users/:id",
   protect,
   authorize("admin", "super_admin"),
   getUserById,
+);
+router.get(
+  "/users/:id/insights",
+  protect,
+  authorize("admin", "super_admin"),
+  getUserInsights,
+);
+router.post(
+  "/users/:id/clear-data",
+  protect,
+  authorize("admin", "super_admin"),
+  clearUserDataByScript,
 );
 router.delete(
   "/users/delete/:id",

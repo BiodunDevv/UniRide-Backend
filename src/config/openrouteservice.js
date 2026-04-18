@@ -12,7 +12,7 @@ const ORS_BASE_URL = "https://api.openrouteservice.org";
 const getRoute = async (startCoords, endCoords) => {
   try {
     const response = await axios.post(
-      `${ORS_BASE_URL}/v2/directions/driving-car`,
+      `${ORS_BASE_URL}/v2/directions/driving-car/geojson`,
       {
         coordinates: [startCoords, endCoords],
       },
@@ -21,19 +21,27 @@ const getRoute = async (startCoords, endCoords) => {
           Authorization: ORS_API_KEY,
           "Content-Type": "application/json",
         },
-      }
+      },
     );
 
-    const route = response.data.routes[0];
+    const feature = response?.data?.features?.[0];
+    const legacyRoute = response?.data?.routes?.[0];
+    const summary = feature?.properties?.summary || legacyRoute?.summary;
+    const geometry = feature?.geometry || legacyRoute?.geometry;
+
+    if (!summary || !geometry) {
+      throw new Error("Route service returned incomplete route payload");
+    }
+
     return {
-      distance_meters: route.summary.distance,
-      duration_seconds: route.summary.duration,
-      geometry: route.geometry,
+      distance_meters: summary.distance,
+      duration_seconds: summary.duration,
+      geometry,
     };
   } catch (error) {
     console.error(
       "OpenRouteService Error:",
-      error.response?.data || error.message
+      error.response?.data || error.message,
     );
     throw new Error("Failed to calculate route");
   }
@@ -87,7 +95,7 @@ const reverseGeocode = async (coords) => {
   } catch (error) {
     console.error(
       "Reverse Geocoding Error:",
-      error.response?.data || error.message
+      error.response?.data || error.message,
     );
     throw new Error("Failed to reverse geocode coordinates");
   }

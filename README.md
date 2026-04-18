@@ -1,351 +1,297 @@
-# UniRide Backend
+<p align="center">
+  <img src="../uniride/assets/images/icon.png" alt="UniRide Logo" width="120" height="120" />
+</p>
 
-UniRide is a secure campus ride-hailing platform designed for universities and campuses. Students and users can create accounts, request rides, track drivers in real-time, and pay via cash or bank transfer. Drivers apply with ID verification. Super Admins manage platform admins. Features include biometric login, single-device restriction, 4-digit ride check-ins, Redis caching, and OpenStreetMap + OpenRouteService routing.
+<h1 align="center">UniRide Backend API</h1>
 
-## 🚀 Features
+<p align="center">
+  Secure backend and realtime engine for UniRide campus ride-hailing operations.
+</p>
 
-### Security
+## Overview
 
-- **JWT Authentication** with device-based single-device restriction
-- **Biometric Authentication** support
-- **First-login password change** enforcement
-- **Password hashing** with bcrypt
-- **Redis-based rate limiting** to prevent API abuse
-- **Helmet.js** for security headers
-- **User flagging** system for admin moderation
+UniRide Backend powers authentication, role-based access control, ride lifecycle management,
+booking, location services, admin operations, support workflows, platform settings, and
+notification delivery for both mobile and web clients.
 
-### Core Functionality
+Key client integrations:
 
-- **User Registration & Login** with email/matric number
-- **Driver Application System** with admin approval workflow
-- **Real-time Ride Tracking** using Socket.io and GPS
-- **4-Digit Check-in Codes** for ride verification
-- **Multi-payment Support** (Cash & Bank Transfer)
-- **Driver Rating System** (1-5 stars)
-- **Fare Management** (Admin-controlled, Driver-set, or Auto-calculated)
+- Mobile app in `../uniride`
+- Web dashboard in `../UniRide-Web`
 
-### Maps & Routing
+## Core Capabilities
 
-- **OpenStreetMap** integration
-- **OpenRouteService** for routing, distance, ETA, and geocoding
-- **Real-time location updates** during rides
-- **Route geometry** visualization support
+- JWT authentication with device/session controls.
+- Role-aware access for user, driver, admin, and super_admin.
+- Driver onboarding and application review workflows.
+- Ride and booking lifecycle management with check-in flows.
+- Realtime Socket.IO feeds for map presence and ride state updates.
+- Platform settings API for mobile feature toggles and map behavior.
+- Support ticket and account deletion workflows.
+- Broadcast and notification infrastructure for ride and system events.
+- API documentation through Swagger UI.
 
-### Notifications
+## Stack
 
-- **Email notifications** via Brevo (driver approval/rejection, booking confirmation, ride completion)
-- **Real-time push notifications** via Socket.io (ride requests, acceptance, driver arrival, ride end)
-- **Firebase Cloud Messaging** for mobile push notifications with granular user preferences
-- **Broadcast messaging** system for admins to send announcements to users, drivers, or all
+- Node.js + Express
+- MongoDB with Mongoose
+- Redis (caching/rate-limiting/supporting infra)
+- Socket.IO for realtime communication
+- Swagger (OpenAPI docs)
+- Brevo email integration
+- OpenRouteService for map/geocoding/routing support
 
-### User Preferences & Settings
+## Service Architecture
 
-- **Notification preferences** per user (push, email, ride events, promotional messages)
-- **FCM token management** for multi-device push notification support
-- **Role-based notification settings** (users, drivers, admins have different notification types)
+### Entry Points
 
-### API Documentation
+- `src/server.js`: server bootstrap, Socket.IO setup, schedulers, DB/Redis startup.
+- `src/app.js`: Express middleware pipeline, route mounting, docs, and error handling.
 
-- **Swagger/OpenAPI** documentation at `/api-docs`
-- Comprehensive endpoint documentation with request/response schemas
+### Domain Layers
 
-## 📋 Prerequisites
+- `src/routes`: HTTP route declarations by domain.
+- `src/controllers`: request handlers and orchestration.
+- `src/services`: shared business logic modules.
+- `src/models`: Mongoose schemas.
+- `src/middlewares`: auth/validation/error pipeline.
+- `src/config`: DB, Redis, external provider config, Swagger.
+- `src/socket`: support-focused socket namespace setup.
 
-- Node.js >= 18.0.0
-- MongoDB database
+## API Surface
+
+Mounted route groups:
+
+| Prefix                   | Purpose                                                          |
+| ------------------------ | ---------------------------------------------------------------- |
+| `/api/auth`              | Registration, login, profile, sessions, authentication actions   |
+| `/api/driver`            | Driver profile, status, application lifecycle, driver operations |
+| `/api/admin`             | Admin workflows, moderation, policy and management endpoints     |
+| `/api/rides`             | Ride creation, retrieval, updates, lifecycle operations          |
+| `/api/booking`           | Booking creation, confirmation, check-in, payment/status updates |
+| `/api/support`           | Support requests and support operations                          |
+| `/api/settings`          | User/device/notification settings                                |
+| `/api/locations`         | Location query and related geospatial endpoints                  |
+| `/api/platform-settings` | Cross-platform feature toggles and runtime settings              |
+| `/api/reviews`           | Review and rating endpoints                                      |
+| `/api/account-deletion`  | Account deletion requests and processing                         |
+
+Documentation endpoints:
+
+- `/api-docs`
+- `/docs`
+
+Health endpoint:
+
+- `/health`
+
+## Realtime (Socket.IO)
+
+Socket behavior includes:
+
+- Room joins for role/user sessions (`join-room`).
+- Live map subscriptions (`join-live-map`, `leave-live-map`).
+- Driver availability channels (`driver-available`, `driver-unavailable`).
+- Ride room subscriptions (`join-ride`, `leave-ride`).
+- Driver feed and user feed channels for dynamic updates.
+- Passenger and driver location streaming events.
+
+Common emitted events include:
+
+- `platform-settings:updated`
+- `driver-online`
+- `driver-offline`
+- `driver-location-updated`
+- `driver-location-update`
+- `passenger-location-updated`
+- `active-rider-location-updated`
+
+## Security and Reliability
+
+- Helmet security headers.
+- CORS enabled for web and mobile clients.
+- Input validation and centralized error handling.
+- Password hashing and token-based auth.
+- Optional request/body redaction in debug HTTP logs.
+- Redis-backed reliability support and performance improvements.
+- Background schedulers for ride/account-deletion lifecycle tasks.
+
+## Prerequisites
+
+- Node.js 18+
+- npm 9+
+- MongoDB instance
 - Redis instance
-- Brevo API key
 - OpenRouteService API key
-- Firebase project with Cloud Messaging enabled
+- Brevo API key (if transactional email is enabled)
 
-## 🛠️ Installation
+## Getting Started
 
-1. **Clone the repository**
-
-```bash
-git clone <repository-url>
-cd UniRide-Backend
-```
-
-2. **Install dependencies**
+1. Install dependencies
 
 ```bash
 npm install
 ```
 
-3. **Configure environment variables**
+2. Create `.env` from your secure environment source
 
-The `.env` file is already configured with your credentials. Key variables:
-
-```env
-NODE_ENV=development
-PORT=5000
-
-MONGODB_URI=your_mongodb_connection_string
-REDIS_HOST=your_redis_host
-REDIS_PORT=your_redis_port
-REDIS_PASSWORD=your_redis_password
-
-JWT_SECRET=your_jwt_secret
-JWT_EXPIRE=7d
-
-OPENROUTESERVICE_API_KEY=your_ors_api_key
-BREVO_API_KEY=your_brevo_api_key
-BREVO_SENDER_EMAIL=your_sender_email
-BREVO_SENDER_NAME=UniRide
-
-FRONTEND_URL=http://localhost:3000
-
-DEFAULT_SUPER_ADMIN_EMAIL=admin@uniride.com
-DEFAULT_SUPER_ADMIN_PASSWORD=secure_password
-DEFAULT_SUPER_ADMIN_FIRST_NAME=Admin
-DEFAULT_SUPER_ADMIN_LAST_NAME=User
-
-# Firebase Cloud Messaging (Push Notifications)
-# Generate service account key from: Firebase Console -> Project Settings -> Service Accounts
-FIREBASE_SERVICE_ACCOUNT_KEY='{"type":"service_account","project_id":"...",...}'
-```
-
-**Setting up Firebase for Push Notifications:**
-
-1. Go to [Firebase Console](https://console.firebase.google.com/)
-2. Create a new project or select existing project
-3. Navigate to **Project Settings** (gear icon) → **Service Accounts**
-4. Click **Generate New Private Key**
-5. Copy the entire JSON content
-6. Add to `.env` as a single-line string in `FIREBASE_SERVICE_ACCOUNT_KEY`
-
-7. **Start the server**
-
-Development mode:
+3. Start development server
 
 ```bash
 npm run dev
 ```
 
-Production mode:
+4. Confirm health and docs
 
-```bash
-npm start
+- `http://localhost:5000/health`
+- `http://localhost:5000/api-docs`
+
+## Environment Variables
+
+Configure the following in `.env`:
+
+| Variable                         | Required                        | Purpose                                            |
+| -------------------------------- | ------------------------------- | -------------------------------------------------- |
+| `NODE_ENV`                       | Recommended                     | Runtime mode (`development` or `production`)       |
+| `PORT`                           | Optional                        | HTTP server port (default: `5000`)                 |
+| `MONGODB_URI`                    | Yes                             | MongoDB connection string                          |
+| `REDIS_HOST`                     | Yes                             | Redis host                                         |
+| `REDIS_PORT`                     | Yes                             | Redis port                                         |
+| `REDIS_PASSWORD`                 | If secured Redis                | Redis password                                     |
+| `JWT_SECRET`                     | Yes                             | JWT signing secret                                 |
+| `JWT_EXPIRE`                     | Recommended                     | JWT expiry window                                  |
+| `DEFAULT_SUPER_ADMIN_EMAIL`      | Recommended                     | Auto-bootstrap super admin email                   |
+| `DEFAULT_SUPER_ADMIN_PASSWORD`   | Recommended                     | Auto-bootstrap super admin password                |
+| `DEFAULT_SUPER_ADMIN_FIRST_NAME` | Recommended                     | Auto-bootstrap super admin first name              |
+| `DEFAULT_SUPER_ADMIN_LAST_NAME`  | Recommended                     | Auto-bootstrap super admin last name               |
+| `OPENROUTESERVICE_API_KEY`       | Yes                             | Routing/geocoding provider key                     |
+| `BREVO_API_KEY`                  | If email enabled                | Brevo API key                                      |
+| `BREVO_SENDER_EMAIL`             | If email enabled                | Sender address for transactional mail              |
+| `BREVO_SENDER_NAME`              | If email enabled                | Sender display name                                |
+| `PAYSTACK_SECRET_KEY`            | If payment integrations enabled | Paystack secret key                                |
+| `TRANSLATOR_API_KEY`             | Optional                        | Translator service key                             |
+| `TRANSLATOR_ENDPOINT`            | Optional                        | Translator endpoint                                |
+| `TRANSLATOR_REGION`              | Optional                        | Translator region                                  |
+| `EXPO_ACCESS_TOKEN`              | Optional                        | Expo API token for selected push workflows         |
+| `DEBUG_HTTP`                     | Optional                        | Enable verbose, redacted boot/auth request logging |
+
+Example:
+
+```env
+NODE_ENV=development
+PORT=5000
+
+MONGODB_URI=mongodb://localhost:27017/uniride
+REDIS_HOST=127.0.0.1
+REDIS_PORT=6379
+REDIS_PASSWORD=
+
+JWT_SECRET=replace_with_secure_secret
+JWT_EXPIRE=7d
+
+DEFAULT_SUPER_ADMIN_EMAIL=admin@uniride.local
+DEFAULT_SUPER_ADMIN_PASSWORD=ChangeMeNow
+DEFAULT_SUPER_ADMIN_FIRST_NAME=Platform
+DEFAULT_SUPER_ADMIN_LAST_NAME=Admin
+
+OPENROUTESERVICE_API_KEY=replace_with_ors_key
+
+BREVO_API_KEY=replace_with_brevo_key
+BREVO_SENDER_EMAIL=noreply@uniride.com
+BREVO_SENDER_NAME=UniRide
+
+PAYSTACK_SECRET_KEY=replace_with_paystack_secret
+
+TRANSLATOR_API_KEY=
+TRANSLATOR_ENDPOINT=
+TRANSLATOR_REGION=
+
+EXPO_ACCESS_TOKEN=
+DEBUG_HTTP=false
 ```
 
-## 📚 API Documentation
+## NPM Scripts
 
-Once the server is running, access the interactive API documentation at:
+| Command                                     | Description                                                          |
+| ------------------------------------------- | -------------------------------------------------------------------- |
+| `npm run dev`                               | Start backend with nodemon                                           |
+| `npm start`                                 | Start backend in normal node runtime                                 |
+| `npm run seed`                              | Run seed script(s)                                                   |
+| `npm run clear -- <email>`                  | Short command to clear ride-related data for one account             |
+| `npm run clear:user -- <email>`             | Clear ride-related data for one account and keep the account profile |
+| `npm run clear:user -- <email> --dry-run`   | Preview what will be cleared without deleting data                   |
+| `npm run clear:muhammedabiodun42@gmail.com` | Shortcut example for a specific account reset                        |
+| `npm test`                                  | Placeholder test command in current package configuration            |
 
-```
-http://localhost:5000/api-docs
-```
+### Account Reset Script
 
-## 🔑 API Endpoints Overview
+Use this when you want to keep an existing account but reset its ride lifecycle data.
 
-### Authentication (`/api/auth`)
+- Clears bookings for the account and bookings tied to rides owned/driven by the account.
+- Clears rides created by the account and rides assigned to the account's driver profile.
+- Clears user notifications/reviews and resets ride-specific account state.
+- Keeps the account itself (email, role, password, profile) intact.
 
-- `POST /register` - User registration
-- `POST /login` - Login with email/password + device_id
-- `POST /biometric` - Biometric authentication
-- `POST /logout` - Logout and free device_id
-- `PATCH /change-password` - Change password (required on first login)
-- `PATCH /enable-biometric` - Enable biometric auth
-- `GET /me` - Get current user profile
+## Operational Workflows
 
-### Driver (`/api/driver`)
+### Startup Sequence
 
-- `POST /apply` - Submit driver application
-- `GET /status` - Check application status
-- `GET /profile` - Get driver profile
-- `PATCH /profile` - Update profile or add bank info
-- `PATCH /toggle-status` - Toggle availability (active/inactive)
+On server start:
 
-### Admin (`/api/admin`)
+1. Environment is loaded.
+2. MongoDB connection initializes.
+3. Redis connection initializes.
+4. Default super admin bootstrap runs.
+5. Background schedulers start.
+6. HTTP + Socket.IO server starts listening.
 
-- `POST /create` - Create admin account (Super Admin only)
-- `GET /drivers/pending` - Get pending applications
-- `GET /drivers/all` - Get all applications
-- `PATCH /drivers/approve/:id` - Approve driver
-- `PATCH /drivers/reject/:id` - Reject driver
-- `GET /drivers/list` - Get all approved drivers
-- `DELETE /drivers/:id` - Delete driver (also removes applications for reapplication)
-- `GET /fare-policy` - Get current fare policy
-- `PATCH /fare-policy` - Update fare policy
-- `PATCH /users/flag/:id` - Flag/unflag user
-- `POST /broadcast` - Send broadcast message to all/users/drivers/admins
-- `GET /broadcasts` - Get broadcast message history
+### Platform Settings Broadcast
 
-### Rides (`/api/rides`)
+Platform setting updates are emitted through Socket.IO so connected mobile clients can
+apply behavior changes (for example map provider and 3D settings) without waiting for app restarts.
 
-- `POST /` - Create new ride (Driver only)
-- `GET /active` - Get all active rides
-- `GET /my-rides` - Get driver's rides
-- `GET /:id` - Get ride details
-- `POST /:id/location` - Update driver GPS location
-- `POST /:id/end` - End ride
+## Project Structure
 
-### Booking (`/api/booking`)
-
-- `POST /request` - Request ride booking
-- `POST /confirm/:id` - Confirm booking (Driver accepts)
-- `POST /checkin` - Check in with 4-digit code
-- `PATCH /payment-status` - Update payment status
-- `POST /rate` - Rate driver after completion
-- `GET /my-bookings` - Get user's bookings
-- `PATCH /cancel/:id` - Cancel booking
-
-### Device Management (`/api/auth`)
-
-- `GET /devices` - Get all logged-in devices
-- `DELETE /devices/:device_id` - Remove specific device (logs out that device)
-- `POST /logout-all` - Logout from all devices
-
-### Notification Settings (`/api/settings`)
-
-- `GET /notifications` - Get notification preferences
-- `PATCH /notifications` - Update notification preferences
-- `POST /fcm-token` - Register FCM token for push notifications
-- `DELETE /fcm-token` - Remove FCM token
-
-## 🎯 User Flows
-
-### Driver Onboarding
-
-1. User applies via frontend, uploads license to Cloudinary
-2. Application stored as 'pending', admin notified
-3. Admin reviews and approves/rejects
-4. Driver receives email with login credentials (first name as password)
-5. Driver logs in, forced to change password
-6. Driver adds bank info later (displayed only after booking confirmation)
-
-### Ride Flow
-
-1. User requests ride (pickup & destination)
-2. All available drivers notified via Socket.io
-3. First driver to accept gets assigned
-4. User sees driver info and bank details for payment
-5. User pays via cash or bank transfer
-6. User enters 4-digit code at pickup to start ride
-7. Live tracking via OpenStreetMap + Socket.io
-8. Driver clicks 'End Ride'
-9. Ride marked completed, payment & ratings updated
-
-## 🔒 Security Features
-
-- **Single-Device Restriction**: Users can only be logged in on one device at a time
-- **Biometric Authentication**: Optional biometric login support
-- **First Login Password Change**: Drivers must change default password
-- **JWT Tokens**: Secure token-based authentication
-- **Rate Limiting**: Redis-based rate limiting to prevent abuse
-- **Input Validation**: All inputs validated and sanitized
-- **Password Hashing**: Bcrypt with salt rounds
-- **User Flagging**: Admins can flag problematic users
-
-## 🗺️ Maps & Routing
-
-The platform uses **OpenRouteService** for:
-
-- Route calculation between pickup and destination
-- Distance calculation (meters)
-- Duration estimation (seconds)
-- Geocoding (address to coordinates)
-- Reverse geocoding (coordinates to address)
-
-Real-time tracking uses **Socket.io** to stream driver location updates to users.
-
-## 📧 Email Templates
-
-Located in `src/emails/`:
-
-- `driverApproval.html` - Driver approval with credentials
-- `driverRejection.html` - Driver rejection with reason
-- `rideConfirmation.html` - Booking confirmation with check-in code
-- `rideCompletion.html` - Ride completion receipt
-- `missedRide.html` - Missed ride notification
-
-## 🚀 Deployment
-
-The backend can be deployed to:
-
-- **Render**
-- **Railway**
-- **AWS** (EC2, ECS, Lambda)
-- **Heroku**
-- **DigitalOcean**
-
-### Environment Variables for Production
-
-Ensure all environment variables are properly set in your deployment platform, especially:
-
-- `NODE_ENV=production`
-- Database credentials
-- Redis credentials
-- API keys
-- Frontend URL for CORS
-
-## 🧪 Testing
-
-```bash
-npm test
-```
-
-## 📝 Project Structure
-
-```
+```text
 UniRide-Backend/
-├── src/
-│   ├── config/          # Configuration files (DB, Redis, Brevo, ORS, Swagger)
-│   ├── controllers/     # Route controllers
-│   ├── emails/          # Email templates
-│   ├── middlewares/     # Express middlewares
-│   ├── models/          # Mongoose models
-│   ├── routes/          # API routes
-│   ├── services/        # Business logic services
-│   ├── utils/           # Utility functions
-│   ├── app.js           # Express app setup
-│   └── server.js        # Server entry point
-├── .env                 # Environment variables
-├── .gitignore
-├── package.json
-└── README.md
+  src/
+    config/
+    controllers/
+    emails/
+    middlewares/
+    models/
+    routes/
+    scripts/
+    services/
+    socket/
+    utils/
+    app.js
+    server.js
+  package.json
+  README.md
 ```
 
-## 👥 User Roles
+## Deployment Notes
 
-- **user**: Regular users who book rides
-- **driver**: Approved drivers who offer rides
-- **admin**: Platform administrators who manage drivers
-- **super_admin**: Super administrators who can create admins
+Supported deployment targets include Render, Railway, VPS, Docker-based hosts, or any Node runtime.
 
-## 🔄 Fare Policy Modes
+Before deploying:
 
-1. **Admin-controlled**: Admin sets fare per route or flat rate (default)
-2. **Driver-settable**: Drivers can set their own fare (future toggle)
-3. **Auto-calculate by distance**: Fare calculated using distance and duration
+- Set all production environment variables.
+- Configure managed MongoDB and Redis instances.
+- Set secure secrets and rotate defaults.
+- Verify CORS behavior for your production frontend/mobile origins.
+- Smoke-test `/health`, auth, booking, and realtime flows.
 
-## 📊 Real-time Features
+## Troubleshooting
 
-Socket.io events:
+- If startup fails, validate MongoDB/Redis credentials and connectivity first.
+- If auth fails unexpectedly, verify JWT secret consistency across environments.
+- If realtime updates are missing, verify Socket.IO client URL and CORS rules.
+- If map features fail, verify OpenRouteService key and quota.
+- If emails are missing, verify Brevo credentials and sender identity configuration.
 
-- `new-ride-request` - Broadcast to available drivers
-- `ride-accepted` - Notify user of driver acceptance
-- `booking-confirmed` - Notify driver of booking confirmation
-- `driver-arrived` - Notify user of driver arrival
-- `driver-location-update` - Real-time GPS updates
-- `ride-ended` - Notify both parties of ride completion
-- `ride-cancelled` - Notify of cancellation
+## Related Projects
 
-## 🛡️ Rate Limiting
-
-- **Auth endpoints**: 5 requests per 15 minutes
-- **API endpoints**: 100 requests per 15 minutes
-- **Strict endpoints**: 10 requests per minute
-
-## 📄 License
-
-MIT
-
-## 👨‍💻 Support
-
-For issues or questions, please contact the development team.
-
----
-
-**Built with ❤️ for UniRide**
+- Mobile application: `../uniride`
+- Admin dashboard: `../UniRide-Web`

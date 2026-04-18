@@ -7,6 +7,9 @@
     "start": "node src/server.js",
     "dev": "nodemon src/server.js",
     "seed": "node src/scripts/seed.js",
+    "clear": "node src/scripts/clearUserData.js",
+    "clear:user": "node src/scripts/clearUserData.js",
+    "clear:muhammedabiodun42@gmail.com": "node src/scripts/clearUserData.js muhammedabiodun42@gmail.com",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "keywords": [

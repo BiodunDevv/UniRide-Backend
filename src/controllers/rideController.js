@@ -4,6 +4,7 @@ const CampusLocation = require("../models/CampusLocation");
 const Driver = require("../models/Driver");
 const FarePolicy = require("../models/FarePolicy");
 const PlatformSettings = require("../models/PlatformSettings");
+const { calculateRoute } = require("../services/routeService");
 const generateCheckInCode = require("../utils/generateCheckInCode");
 const notificationService = require("../services/notificationService");
 const { getIO } = require("../utils/socketManager");
@@ -30,6 +31,90 @@ const ensureUserHasBookingPhone = async (userId) => {
   }
 
   return { ok: true, rider };
+};
+
+const RIDE_PARTICIPANT_STATUSES = [
+  "pending",
+  "accepted",
+  "in_progress",
+  "completed",
+];
+const ACTIVE_RIDE_PARTICIPANT_STATUSES = new Set([
+  "pending",
+  "accepted",
+  "in_progress",
+]);
+
+const withElapsedSeconds = (rideObj) => {
+  if (!rideObj?.started_at) return rideObj;
+
+  const startedAtMs = new Date(rideObj.started_at).getTime();
+  if (Number.isNaN(startedAtMs)) return rideObj;
+
+  const endCandidate =
+    rideObj.status === "in_progress"
+      ? Date.now()
+      : rideObj.ended_at
+        ? new Date(rideObj.ended_at).getTime()
+        : Date.now();
+
+  if (Number.isNaN(endCandidate) || endCandidate < startedAtMs) {
+    return rideObj;
+  }
+
+  return {
+    ...rideObj,
+    elapsed_seconds: Math.max(
+      0,
+      Math.floor((endCandidate - startedAtMs) / 1000),
+    ),
+  };
+};
+
+const getRideParticipantsMap = async (rideIds) => {
+  if (!rideIds.length) return new Map();
+
+  const participantBookings = await Booking.find({
+    ride_id: { $in: rideIds },
+    status: { $in: RIDE_PARTICIPANT_STATUSES },
+  })
+    .populate("user_id", "name profile_picture phone")
+    .sort({ createdAt: 1 });
+
+  const participantsByRide = new Map();
+
+  for (const booking of participantBookings) {
+    const rideKey = booking.ride_id?.toString?.();
+    if (!rideKey) continue;
+
+    const userDoc =
+      booking.user_id && typeof booking.user_id === "object"
+        ? booking.user_id
+        : null;
+    const userId =
+      userDoc?._id?.toString?.() ||
+      (typeof booking.user_id === "string" ? booking.user_id : null);
+
+    const participant = {
+      booking_id: booking._id,
+      user_id: userId,
+      passenger_name: userDoc?.name || "Passenger",
+      passenger_phone: userDoc?.phone || null,
+      profile_picture: userDoc?.profile_picture || null,
+      seats_requested: booking.seats_requested,
+      status: booking.status,
+      check_in_status: booking.check_in_status,
+      payment_status: booking.payment_status,
+      booking_time: booking.booking_time,
+      createdAt: booking.createdAt,
+    };
+
+    const rideParticipants = participantsByRide.get(rideKey) || [];
+    rideParticipants.push(participant);
+    participantsByRide.set(rideKey, rideParticipants);
+  }
+
+  return participantsByRide;
 };
 
 // ── Create a ride (users request, drivers schedule, admins schedule) ────────
@@ -79,6 +164,21 @@ const createRide = async (req, res, next) => {
       });
     }
 
+    if (isUser) {
+      const onlineApprovedDrivers = await Driver.countDocuments({
+        is_online: true,
+        application_status: "approved",
+      });
+
+      if (onlineApprovedDrivers === 0) {
+        return res.status(409).json({
+          success: false,
+          message:
+            "No drivers are currently online. Please join an existing ride or try again shortly.",
+        });
+      }
+    }
+
     if (!pickup_location_id || !destination_id) {
       return res.status(400).json({
         success: false,
@@ -122,6 +222,37 @@ const createRide = async (req, res, next) => {
       settings.max_seats_per_booking || 4,
     );
 
+    let routeSnapshot = null;
+    const pickupCoordinates = Array.isArray(pickup?.coordinates?.coordinates)
+      ? pickup.coordinates.coordinates
+      : null;
+    const destinationCoordinates = Array.isArray(dest?.coordinates?.coordinates)
+      ? dest.coordinates.coordinates
+      : null;
+
+    if (
+      pickupCoordinates?.length === 2 &&
+      destinationCoordinates?.length === 2
+    ) {
+      try {
+        routeSnapshot = await calculateRoute(
+          {
+            coordinates: pickupCoordinates,
+            address: pickup.address || pickup.name,
+          },
+          {
+            coordinates: destinationCoordinates,
+            address: dest.address || dest.name,
+          },
+        );
+      } catch (routeError) {
+        console.warn(
+          "Route calculation unavailable for ride creation:",
+          routeError.message,
+        );
+      }
+    }
+
     // Build ride
     const rideData = {
       created_by: req.user._id,
@@ -141,6 +272,9 @@ const createRide = async (req, res, next) => {
       departure_time: departure_time || new Date(),
       available_seats: seats,
       check_in_code: checkInCode,
+      route_geometry: routeSnapshot?.route_geometry,
+      distance_meters: routeSnapshot?.distance_meters,
+      duration_seconds: routeSnapshot?.duration_seconds,
     };
 
     if (isUser) {
@@ -415,7 +549,7 @@ const getActiveRides = async (req, res, next) => {
       .map((r) => {
         const obj = r.toObject();
         obj.seats_remaining = r.available_seats - r.booked_seats;
-        return obj;
+        return withElapsedSeconds(obj);
       });
 
     res.status(200).json({ success: true, count: data.length, data });
@@ -446,19 +580,60 @@ const getRideDetails = async (req, res, next) => {
         .status(404)
         .json({ success: false, message: "Ride not found" });
 
+    if (
+      (!ride.distance_meters ||
+        !ride.duration_seconds ||
+        !ride.route_geometry) &&
+      Array.isArray(ride.pickup_location?.coordinates) &&
+      Array.isArray(ride.destination?.coordinates)
+    ) {
+      try {
+        const routeSnapshot = await calculateRoute(
+          {
+            coordinates: ride.pickup_location.coordinates,
+            address:
+              ride.pickup_location?.address || ride.pickup_location_id?.address,
+          },
+          {
+            coordinates: ride.destination.coordinates,
+            address: ride.destination?.address || ride.destination_id?.address,
+          },
+        );
+
+        ride.distance_meters =
+          ride.distance_meters || routeSnapshot?.distance_meters;
+        ride.duration_seconds =
+          ride.duration_seconds || routeSnapshot?.duration_seconds;
+        ride.route_geometry =
+          ride.route_geometry || routeSnapshot?.route_geometry;
+
+        await ride.save();
+      } catch (routeError) {
+        console.warn(
+          "Route enrichment skipped for ride details:",
+          routeError.message,
+        );
+      }
+    }
+
     const bookings = await Booking.find({
       ride_id: ride._id,
-      status: { $in: ["pending", "accepted", "in_progress"] },
+      status: {
+        $in: ["pending", "accepted", "in_progress", "completed", "cancelled"],
+      },
     }).populate(
       "user_id",
       "name email profile_picture phone current_location updatedAt",
     );
 
     const obj = ride.toObject();
-    obj.seats_remaining = ride.available_seats - ride.booked_seats;
-    obj.bookings = bookings;
+    const ridePayload = withElapsedSeconds({
+      ...obj,
+      seats_remaining: ride.available_seats - ride.booked_seats,
+      bookings,
+    });
 
-    res.status(200).json({ success: true, data: obj });
+    res.status(200).json({ success: true, data: ridePayload });
   } catch (error) {
     next(error);
   }
@@ -468,29 +643,58 @@ const getRideDetails = async (req, res, next) => {
 const getAllRides = async (req, res, next) => {
   try {
     const { status, driver_id, page = 1, limit = 20 } = req.query;
+    const pageNumber = Math.max(Number(page) || 1, 1);
+    const pageSize = Math.max(Number(limit) || 20, 1);
+
     const filter = {};
     if (status) filter.status = status;
     if (driver_id) filter.driver_id = driver_id;
 
     const rides = await Ride.find(filter)
+      .populate("created_by", "name profile_picture phone")
       .populate("pickup_location_id")
       .populate("destination_id")
       .populate({
         path: "driver_id",
-        populate: { path: "user_id", select: "name" },
+        select:
+          "user_id phone vehicle_model plate_number vehicle_color rating is_online vehicle_image",
+        populate: { path: "user_id", select: "name profile_picture phone" },
       })
       .sort({ departure_time: -1 })
-      .skip((page - 1) * limit)
-      .limit(Number(limit));
+      .skip((pageNumber - 1) * pageSize)
+      .limit(pageSize);
+
+    const participantsByRide = await getRideParticipantsMap(
+      rides.map((ride) => ride._id),
+    );
+
+    const data = rides.map((rideDoc) => {
+      const ride = rideDoc.toObject();
+      const participants = participantsByRide.get(rideDoc._id.toString()) || [];
+      const activeParticipants = participants.filter((participant) =>
+        ACTIVE_RIDE_PARTICIPANT_STATUSES.has(participant.status),
+      );
+      const checkedInCount = activeParticipants.filter(
+        (participant) => participant.check_in_status === "checked_in",
+      ).length;
+
+      return {
+        ...withElapsedSeconds(ride),
+        participants,
+        participant_count: participants.length,
+        active_participant_count: activeParticipants.length,
+        checked_in_count: checkedInCount,
+      };
+    });
 
     const total = await Ride.countDocuments(filter);
 
     res.status(200).json({
       success: true,
-      count: rides.length,
+      count: data.length,
       total,
-      page: Number(page),
-      data: rides,
+      page: pageNumber,
+      data,
     });
   } catch (error) {
     next(error);
@@ -529,46 +733,144 @@ const updateRide = async (req, res, next) => {
 // ── Admin: Cancel ride ──────────────────────────────────────────────────────
 const cancelRide = async (req, res, next) => {
   try {
+    const rawReason =
+      typeof req.body?.reason === "string" ? req.body.reason : "";
+    const trimmedReason = rawReason.trim();
     const ride = await Ride.findById(req.params.id);
     if (!ride)
       return res
         .status(404)
         .json({ success: false, message: "Ride not found" });
 
+    if (["completed", "cancelled"].includes(ride.status)) {
+      return res.status(400).json({
+        success: false,
+        message: `Ride is already ${ride.status}`,
+      });
+    }
+
+    let cancelReason = trimmedReason;
+    if (req.user.role === "driver") {
+      const driver = await Driver.findOne({ user_id: req.user._id });
+      if (
+        !driver ||
+        !ride.driver_id ||
+        ride.driver_id.toString() !== driver._id.toString()
+      ) {
+        return res
+          .status(403)
+          .json({ success: false, message: "Not authorized" });
+      }
+
+      if (!cancelReason || cancelReason.length < 8) {
+        return res.status(400).json({
+          success: false,
+          message:
+            "Please provide a clear cancellation reason (minimum 8 characters)",
+        });
+      }
+    } else if (!cancelReason) {
+      cancelReason = "Cancelled by admin";
+    }
+
+    const previousStatus = ride.status;
     ride.status = "cancelled";
+    ride.cancelled_at = new Date();
+    ride.cancelled_by = req.user._id;
+    ride.cancel_reason = cancelReason;
+    if (previousStatus === "in_progress" && !ride.ended_at) {
+      ride.ended_at = new Date();
+    }
     await ride.save();
+
+    const cancellableBookingStatuses = ["pending", "accepted", "in_progress"];
 
     // Find all affected bookings before bulk cancelling
     const affectedBookings = await Booking.find({
       ride_id: ride._id,
-      status: { $in: ["pending", "accepted"] },
+      status: { $in: cancellableBookingStatuses },
     }).select("user_id");
 
     await Booking.updateMany(
-      { ride_id: ride._id, status: { $in: ["pending", "accepted"] } },
-      { status: "cancelled" },
+      { ride_id: ride._id, status: { $in: cancellableBookingStatuses } },
+      {
+        status: "cancelled",
+        reviewed_by: req.user._id,
+        reviewed_at: new Date(),
+        admin_note: cancelReason
+          ? `Ride cancelled: ${cancelReason}`
+          : "Ride cancelled",
+      },
     );
 
     // Notify all affected users about ride cancellation
     for (const b of affectedBookings) {
       notificationService.notifyRideCancellation(b.user_id.toString(), "user", {
         ride_id: ride._id.toString(),
+        reason: cancelReason,
+        cancelled_by: req.user.role,
       });
+
+      if (cancelReason) {
+        notificationService.createAndPush(
+          b.user_id.toString(),
+          "Ride Cancelled",
+          `Your ride was cancelled${req.user.role === "driver" ? " by the driver" : " by support"}. Reason: ${cancelReason}`,
+          "ride",
+          {
+            action: "ride_cancelled",
+            ride_id: ride._id.toString(),
+            reason: cancelReason,
+            cancelled_by: req.user.role,
+          },
+        );
+      }
     }
 
     // Notify driver if assigned
     if (ride.driver_id) {
       const driver = await Driver.findById(ride.driver_id).select("user_id");
-      if (driver) {
+      if (driver && driver.user_id.toString() !== req.user._id.toString()) {
         notificationService.notifyRideCancellation(
           driver.user_id.toString(),
           "driver",
-          { ride_id: ride._id.toString() },
+          {
+            ride_id: ride._id.toString(),
+            reason: cancelReason,
+            cancelled_by: req.user.role,
+          },
         );
       }
     }
 
-    res.status(200).json({ success: true, message: "Ride cancelled" });
+    try {
+      const io = getIO();
+      io.to(`ride-${ride._id}`).emit("ride:cancelled", {
+        ride_id: ride._id.toString(),
+        reason: cancelReason,
+        cancelled_by: req.user.role,
+      });
+
+      for (const b of affectedBookings) {
+        io.to(`user-feed-${b.user_id}`).emit("ride:cancelled", {
+          ride_id: ride._id.toString(),
+          reason: cancelReason,
+          cancelled_by: req.user.role,
+        });
+      }
+    } catch (e) {
+      console.log("Socket emit failed (non-critical):", e.message);
+    }
+
+    res.status(200).json({
+      success: true,
+      message: "Ride cancelled",
+      data: {
+        ride_id: ride._id,
+        reason: cancelReason,
+        cancelled_by: req.user.role,
+      },
+    });
   } catch (error) {
     next(error);
   }
@@ -635,6 +937,10 @@ const startRide = async (req, res, next) => {
     }
 
     if (ride.status === "in_progress") {
+      if (!ride.started_at) {
+        ride.started_at = ride.updatedAt || new Date();
+        await ride.save();
+      }
       // Already started — just return success
       return res
         .status(200)
@@ -648,20 +954,49 @@ const startRide = async (req, res, next) => {
       });
     }
 
-    // Require at least one checked-in passenger
-    const checkedIn = await Booking.countDocuments({
+    const pendingBookings = await Booking.countDocuments({
+      ride_id: ride._id,
+      status: "pending",
+    });
+
+    if (pendingBookings > 0) {
+      return res.status(400).json({
+        success: false,
+        message: `You have ${pendingBookings} pending booking request${pendingBookings === 1 ? "" : "s"}. Accept or decline them before starting the ride.`,
+      });
+    }
+
+    // Require accepted passengers and full check-in completion before start
+    const acceptedPassengers = await Booking.countDocuments({
+      ride_id: ride._id,
+      status: "accepted",
+    });
+
+    if (acceptedPassengers === 0) {
+      return res.status(400).json({
+        success: false,
+        message:
+          "No accepted passengers yet. Accept bookings before starting the ride.",
+      });
+    }
+
+    const checkedInPassengers = await Booking.countDocuments({
       ride_id: ride._id,
       status: "accepted",
       check_in_status: "checked_in",
     });
-    if (checkedIn === 0) {
+
+    if (checkedInPassengers !== acceptedPassengers) {
       return res.status(400).json({
         success: false,
-        message: "At least one passenger must check in before starting",
+        message: `All accepted passengers must check in before starting (${checkedInPassengers}/${acceptedPassengers} checked in).`,
       });
     }
 
     ride.status = "in_progress";
+    if (!ride.started_at) {
+      ride.started_at = new Date();
+    }
     await ride.save();
 
     // Update all accepted bookings to in_progress
@@ -675,6 +1010,7 @@ const startRide = async (req, res, next) => {
       const io = getIO();
       io.to(`ride-${ride._id}`).emit("ride:started", {
         ride_id: ride._id.toString(),
+        started_at: ride.started_at,
       });
       // Notify all passengers
       const rideBookings = await Booking.find({
@@ -684,6 +1020,7 @@ const startRide = async (req, res, next) => {
       for (const b of rideBookings) {
         io.to(`user-feed-${b.user_id}`).emit("ride:started", {
           ride_id: ride._id.toString(),
+          started_at: ride.started_at,
         });
         notificationService.createAndPush(
           b.user_id.toString(),
@@ -731,6 +1068,9 @@ const endRide = async (req, res, next) => {
     }
 
     ride.status = "completed";
+    if (!ride.started_at) {
+      ride.started_at = new Date();
+    }
     ride.ended_at = new Date();
     await ride.save();
 

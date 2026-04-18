@@ -93,7 +93,7 @@ const seedDatabase = async () => {
     // 2. Create Test Regular Users
     console.log("\n👥 Creating Test Users...");
     const testUsers = [
-      {
+      { 
         name: "Muhammed Mustapha",
         email: "mustapha.muhammed@bowen.edu.ng",
         password: "balikiss12",

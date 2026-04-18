@@ -8,6 +8,9 @@ const { setIO } = require("./utils/socketManager");
 const { initializeSupportSocket } = require("./socket/supportSocket");
 const { startRideScheduler } = require("./services/rideScheduler");
 const {
+  startDriverPresenceScheduler,
+} = require("./services/driverPresenceScheduler");
+const {
   startAccountDeletionScheduler,
 } = require("./services/accountDeletionScheduler");
 const User = require("./models/User");
@@ -80,21 +83,22 @@ io.on("connection", (socket) => {
   // Handle real-time driver location streaming (from driver's device)
   socket.on("driver-location-stream", (data) => {
     const { driver_id, latitude, longitude, heading } = data;
-    // Broadcast to live-map viewers (users + admin)
-    io.to("live-map").emit("driver-location-updated", {
+    const timestamp = new Date();
+    const payload = {
       driver_id,
       location: { latitude, longitude },
+      latitude,
+      longitude,
       heading: heading || 0,
-      timestamp: new Date(),
-    });
+      timestamp,
+      ride_id: data.ride_id,
+    };
+    // Broadcast to live-map viewers (users + admin)
+    io.to("live-map").emit("driver-location-updated", payload);
     // Also broadcast to ride-specific room if active
     if (data.ride_id) {
-      io.to(`ride-${data.ride_id}`).emit("driver-location-update", {
-        latitude,
-        longitude,
-        heading,
-        timestamp: new Date(),
-      });
+      io.to(`ride-${data.ride_id}`).emit("driver-location-update", payload);
+      io.to(`ride-${data.ride_id}`).emit("driver-location-updated", payload);
     }
   });
 
@@ -134,12 +138,17 @@ io.on("connection", (socket) => {
   // Handle real-time location updates (legacy - for active rides)
   socket.on("update-location", (data) => {
     const { ride_id, latitude, longitude } = data;
-    // Broadcast to users in this ride
-    io.to(`ride-${ride_id}`).emit("driver-location-update", {
+    const timestamp = new Date();
+    const payload = {
+      ride_id,
+      location: { latitude, longitude },
       latitude,
       longitude,
-      timestamp: new Date(),
-    });
+      timestamp,
+    };
+    // Broadcast to users in this ride
+    io.to(`ride-${ride_id}`).emit("driver-location-update", payload);
+    io.to(`ride-${ride_id}`).emit("driver-location-updated", payload);
   });
 
   // Handle real-time passenger location streaming
@@ -186,6 +195,7 @@ const startServer = async () => {
 
     // Start ride expiry scheduler
     startRideScheduler();
+    startDriverPresenceScheduler();
     startAccountDeletionScheduler();
 
     // Start server
